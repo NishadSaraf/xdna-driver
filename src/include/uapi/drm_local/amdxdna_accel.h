@@ -488,6 +488,17 @@ struct amdxdna_drm_query_firmware_version {
 	__u32 build; /* out */
 };
 
+/**
+ * struct amdxdna_drm_get_force_preempt_state - Get force preemption state
+ * @force_preempt_state: 1 implies force preemption is enabled.
+ *						 0 implies disabled
+ * @pad: MBZ.
+ */
+struct amdxdna_drm_get_force_preempt_state {
+	__u8 state;
+	__u8 pad[7];
+};
+
 enum amdxdna_drm_get_param {
 	DRM_AMDXDNA_QUERY_AIE_STATUS,
 	DRM_AMDXDNA_QUERY_AIE_METADATA,
@@ -500,6 +511,7 @@ enum amdxdna_drm_get_param {
 	DRM_AMDXDNA_QUERY_FIRMWARE_VERSION,
 	DRM_AMDXDNA_GET_POWER_MODE,
 	DRM_AMDXDNA_QUERY_TELEMETRY,
+	DRM_AMDXDNA_GET_FORCE_PREEMPT_STATE,
 	DRM_AMDXDNA_NUM_GET_PARAM,
 };
 
@@ -525,10 +537,22 @@ struct amdxdna_drm_set_power_mode {
 	__u8 pad[7];
 };
 
+/**
+ * struct amdxdna_drm_set_force_preempt_state - set force preemption state
+ * @force_preempt_state: 1 implies force preemption is enabled.
+ *						 0 implies disabled
+ * @pad: MBZ.
+ */
+struct amdxdna_drm_set_force_preempt_state {
+	__u8 state;
+	__u8 pad[7];
+};
+
 enum amdxdna_drm_set_param {
 	DRM_AMDXDNA_SET_POWER_MODE,
 	DRM_AMDXDNA_WRITE_AIE_MEM,
 	DRM_AMDXDNA_WRITE_AIE_REG,
+	DRM_AMDXDNA_SET_FORCE_PREEMPT,
 	DRM_AMDXDNA_NUM_SET_PARAM,
 };
 
