@@ -42,6 +42,29 @@ enum ert_cmd_state {
 };
 
 /*
+ * Enum to capture XRT defined app priorities
+ * XRT_QOS_REALTIME_PRIORITY: Real time clients
+ * XRT_QOS_HIGH_PRIORITY: Best effort foreground clients
+ * XRT_QOS_NORMAL_PRIORITY: Best effort or background clients
+ * XRT_QOS_LOW_PRIORITY: Clients that can wait indefinite amount of time
+ *                       for completion
+ */
+enum xrt_qos_priority {
+	XRT_QOS_DEFAULT_PRIORITY = 0x0,
+	XRT_QOS_REALTIME_PRIORITY = 0x100,
+	XRT_QOS_HIGH_PRIORITY = 0x180,
+	XRT_QOS_NORMAL_PRIORITY = 0x200,
+	XRT_QOS_LOW_PRIORITY = 0x280
+};
+
+enum npu_qos_priority {
+	NPU_QOS_REALTIME_PRIORITY = 1,
+	NPU_QOS_HIGH_PRIORITY,
+	NPU_QOS_NORMAL_PRIORITY,
+	NPU_QOS_LOW_PRIORITY
+};
+
+/*
  * Interpretation of the beginning of data payload for ERT_START_NPU in
  * amdxdna_cmd. The rest of the payload in amdxdna_cmd is regular kernel args.
  */
