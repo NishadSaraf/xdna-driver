@@ -58,12 +58,14 @@
 #define NPU4_SMU_BAR_BASE	MMNPU_APERTURE4_BASE
 #define NPU4_SRAM_BAR_BASE	MMNPU_APERTURE1_BASE
 
-#define NPU4_RT_CFG_TYPE_CLK_GATING   1
-#define NPU4_RT_CFG_TYPE_HCLK_GATING  2
-#define NPU4_RT_CFG_TYPE_PWR_GATING   3
-#define NPU4_RT_CFG_TYPE_L1IMU_GATING 4
-#define NPU4_RT_CFG_TYPE_PDI_LOAD     5
-#define NPU4_RT_CFG_TYPE_DEBUG_BO     10
+#define NPU4_RT_CFG_TYPE_CLK_GATING			1
+#define NPU4_RT_CFG_TYPE_HCLK_GATING		2
+#define NPU4_RT_CFG_TYPE_PWR_GATING			3
+#define NPU4_RT_CFG_TYPE_L1IMU_GATING		4
+#define NPU4_RT_CFG_TYPE_PDI_LOAD			5
+#define NPU4_RT_CFG_TYPE_DEBUG_BO			10
+#define NPU4_RT_CFG_TYPE_CTRL_PREEMPTION	12
+#define NPU4_RT_CFG_TYPE_FORCE_PREEMPTION	13
 
 #define NPU4_RT_CFG_VAL_CLK_GATING_OFF 0
 #define NPU4_RT_CFG_VAL_CLK_GATING_ON 1
@@ -75,7 +77,11 @@
 #define NPU4_RT_CFG_VAL_DEBUG_BO_LARGE   1
 
 #define NPU4_INIT_RT_CFG_NUM	2
+
 #define NPU4_CLK_GATING_CFG_NUM 4
+
+#define NPU4_RT_CFG_VAL_PREEMPTION_DISABLE	0
+#define NPU4_RT_CFG_VAL_PREEMPTION_ENABLE	1
 
 extern const struct dpm_clk npu4_dpm_clk_table[DPM_LEVEL_MAX];
 extern const struct rt_config npu4_rt_cfg[NPU4_INIT_RT_CFG_NUM];
@@ -117,7 +123,12 @@ extern const u32 npu4_clk_gating_types[NPU4_CLK_GATING_CFG_NUM];
 	},											\
 	.smu_rev = SMU_REVISION_NPU4,								\
 	.smu_npu_dpm_clk_table = npu4_dpm_clk_table,						\
-	.smu_npu_dpm_levels = ARRAY_SIZE(npu4_dpm_clk_table)
+	.smu_npu_dpm_levels = ARRAY_SIZE(npu4_dpm_clk_table),				\
+	.disable_fine_preemption = {									\
+		.type = NPU4_RT_CFG_TYPE_CTRL_PREEMPTION,					\
+		.value = NPU4_RT_CFG_VAL_PREEMPTION_DISABLE					\
+	},																\
+	.force_preempt = {NPU4_RT_CFG_TYPE_FORCE_PREEMPTION, 0}
 
 #define NPU4_COMMON_DEV_INFO \
 	.reg_bar           = NPU4_REG_BAR_INDEX,						\
