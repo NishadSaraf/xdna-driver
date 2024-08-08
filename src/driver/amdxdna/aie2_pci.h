@@ -239,6 +239,8 @@ struct amdxdna_dev_hdl {
 	u32				clk_gating;
 	u32				npuclk_freq;
 	u32				hclk_freq;
+	bool				clk_gate_enabled;
+	bool				force_preempt_enabled;
 
 	/* Mailbox and the management channel */
 	struct mailbox			*mbox;
@@ -279,6 +281,12 @@ struct amdxdna_dev_priv {
 	struct aie2_bar_off_pair	psp_regs_off[PSP_MAX_REGS];
 	struct aie2_bar_off_pair	smu_regs_off[SMU_MAX_REGS];
 	struct aie2_hw_ops		hw_ops;
+	struct rt_config_clk_gating	clk_gating;
+	u32				smu_rev;
+	const struct dpm_clk		*smu_npu_dpm_clk_table;
+	u32				smu_npu_dpm_levels;
+	struct rt_config		disable_fine_preemption;
+	struct rt_config		force_preempt;
 #ifdef AMDXDNA_DEVEL
 	struct rt_config		priv_load_cfg;
 #endif
@@ -350,6 +358,7 @@ int aie2_query_aie_version(struct amdxdna_dev_hdl *ndev, struct aie_version *ver
 int aie2_query_aie_metadata(struct amdxdna_dev_hdl *ndev, struct aie_metadata *metadata);
 int aie2_query_firmware_version(struct amdxdna_dev_hdl *ndev,
 				struct amdxdna_fw_ver *fw_ver);
+int aie2_set_force_preemption_state(struct amdxdna_dev_hdl *ndev, bool value);
 int aie2_create_context(struct amdxdna_dev_hdl *ndev, struct amdxdna_hwctx *hwctx);
 int aie2_destroy_context(struct amdxdna_dev_hdl *ndev, struct amdxdna_hwctx *hwctx);
 int aie2_map_host_buf(struct amdxdna_dev_hdl *ndev, u32 context_id, u64 addr, u64 size);

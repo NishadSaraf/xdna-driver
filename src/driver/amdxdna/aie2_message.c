@@ -19,6 +19,29 @@
 #define aie2_send_mgmt_msg_wait(ndev, msg) \
 	aie2_send_mgmt_msg_wait_offset(ndev, msg, 0)
 
+static int map_xrt_priority_to_fw(enum xrt_qos_priority xvalue, u32 *nvalue)
+{
+	switch (xvalue) {
+	case XRT_QOS_REALTIME_PRIORITY:
+		*nvalue = NPU_QOS_REALTIME_PRIORITY;
+		break;
+	case XRT_QOS_DEFAULT_PRIORITY:
+		/* fallthrough */
+	case XRT_QOS_HIGH_PRIORITY:
+		*nvalue = NPU_QOS_HIGH_PRIORITY;
+		break;
+	case XRT_QOS_NORMAL_PRIORITY:
+		*nvalue = NPU_QOS_NORMAL_PRIORITY;
+		break;
+	case XRT_QOS_LOW_PRIORITY:
+		*nvalue = NPU_QOS_LOW_PRIORITY;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
 static int
 aie2_send_mgmt_msg_wait_offset(struct amdxdna_dev_hdl *ndev,
 			       struct xdna_mailbox_msg *msg,
@@ -232,6 +255,13 @@ int aie2_query_firmware_version(struct amdxdna_dev_hdl *ndev,
 	return 0;
 }
 
+int aie2_set_force_preemption_state(struct amdxdna_dev_hdl *ndev, bool value)
+{
+	ndev->force_preempt_enabled = value;
+	XDNA_INFO(ndev->xdna, "Force preemption %s", value ? "enabled": "disabled");
+	return 0;
+}
+
 int aie2_create_context(struct amdxdna_dev_hdl *ndev, struct amdxdna_hwctx *hwctx)
 {
 	DECLARE_AIE2_MSG(create_ctx, MSG_OP_CREATE_CONTEXT);
@@ -239,16 +269,23 @@ int aie2_create_context(struct amdxdna_dev_hdl *ndev, struct amdxdna_hwctx *hwct
 	enum xdna_mailbox_channel_type type;
 	struct xdna_mailbox_chann_res x2i;
 	struct xdna_mailbox_chann_res i2x;
+	const struct rt_config *config;
 	struct cq_pair *cq_pair;
-	u32 intr_reg;
+	u32 intr_reg, priority;
 	int ret;
+
+	ret = map_xrt_priority_to_fw(hwctx->qos.priority, &priority);
+	if (ret) {
+		XDNA_ERR(xdna, "Invalid context priority: 0x%x\n", hwctx->qos.priority);
+		return ret;
+	}
 
 	req.aie_type = 1;
 	req.start_col = hwctx->start_col;
 	req.num_col = hwctx->num_col;
 	req.num_cq_pairs_requested = 1;
 	req.pasid = hwctx->client->pasid;
-	req.context_priority = 2;
+	req.context_priority = priority;
 
 	ret = aie2_send_mgmt_msg_wait(ndev, &msg);
 	if (ret)
@@ -256,6 +293,22 @@ int aie2_create_context(struct amdxdna_dev_hdl *ndev, struct amdxdna_hwctx *hwct
 
 	hwctx->fw_ctx_id = resp.context_id;
 	WARN_ONCE(hwctx->fw_ctx_id == -1, "Unexpected context id");
+
+	if (ndev->force_preempt_enabled) {
+		config = &ndev->priv->force_preempt;
+
+		if (!config->type) {
+			XDNA_WARN(ndev->xdna, "Force preemption unsupported for device gen");
+		} else {
+			XDNA_DBG(xdna, "Forcing preemption for ctxt ID: %u\n",
+					 hwctx->fw_ctx_id);
+			ret = aie2_set_runtime_cfg(ndev, config->type, hwctx->fw_ctx_id);
+			if (ret) {
+				XDNA_ERR(xdna, "Failed to force enable preemption\n");
+				return ret;
+			}
+		}
+	}
 
 	cq_pair = &resp.cq_pair[0];
 	x2i.mb_head_ptr_reg = AIE2_MBOX_OFF(ndev, cq_pair->x2i_q.head_addr);
