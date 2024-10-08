@@ -286,20 +286,25 @@ aie2_sched_resp_handler(void *handle, const u32 *data, size_t size)
 	struct amdxdna_gem_obj *cmd_abo;
 	u32 ret = 0;
 	u32 status;
+	struct execute_buffer_preempt_resp *resp = (struct execute_buffer_preempt_resp *)data;
 
 	cmd_abo = job->cmd_bo;
 
 	if (unlikely(!data))
 		goto out;
 
+#if 0
 	if (unlikely(size != sizeof(u32))) {
 		amdxdna_cmd_set_state(cmd_abo, ERT_CMD_STATE_ABORT);
 		ret = -EINVAL;
 		goto out;
 	}
+#endif
 
-	status = *data;
+	status = resp->status;
 	XDNA_DBG(job->hwctx->client->xdna, "Response status 0x%x", status);
+	XDNA_INFO(job->hwctx->client->xdna, "Response preemption counter %lld", resp->pcount);
+
 	if (status == AIE2_STATUS_SUCCESS)
 		amdxdna_cmd_set_state(cmd_abo, ERT_CMD_STATE_COMPLETED);
 	else

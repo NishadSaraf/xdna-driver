@@ -204,6 +204,11 @@ struct execute_buffer_resp {
 	enum aie2_msg_status	status;
 } __packed;
 
+struct execute_buffer_preempt_resp {
+	enum aie2_msg_status	status;
+	u64 pcount;
+} __packed;
+
 struct aie_tile_info {
 	u32		size;
 	u16		major;
