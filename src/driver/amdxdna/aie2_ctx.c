@@ -183,22 +183,39 @@ aie2_sched_resp_handler(void *handle, void __iomem *data, size_t size)
 {
 	struct amdxdna_sched_job *job = handle;
 	struct amdxdna_gem_obj *cmd_abo;
+    u64 aie, fw, ipu;
 	u32 ret = 0;
 	u32 status;
+    u32 aclk, iclk;
+    u32 a, f, i;
 
 	cmd_abo = job->cmd_bo;
 
 	if (unlikely(!data))
 		goto out;
 
+#if 0
 	if (unlikely(size != sizeof(u32))) {
 		amdxdna_cmd_set_state(cmd_abo, ERT_CMD_STATE_ABORT);
 		ret = -EINVAL;
 		goto out;
 	}
-
+#endif
+    iclk = job->ctx->client->xdna->dev_handle->npuclk_freq;
+    aclk = job->ctx->client->xdna->dev_handle->hclk_freq;
 	status = readl(data);
+    aie = readq(data + 4);
+    fw = readq(data + 12);
+    ipu = readq(data + 20);
 	XDNA_DBG(job->ctx->client->xdna, "Response status 0x%x", status);
+    //XDNA_INFO(job->ctx->client->xdna, "aie: %lld fw: %lld ipu: %lld", aie, fw, ipu);
+    XDNA_INFO(job->ctx->client->xdna, "aie: %dMHz fw: %dMHz ipuMHz: %d", aclk, 25, iclk);
+    XDNA_INFO(job->ctx->client->xdna, "freq aie: %lld fw: %lld ipu: %lld", aie, fw, ipu);
+    a = aie/(aclk*1000);
+    f = fw/25000;
+    i = ipu/(iclk*1000);
+    XDNA_INFO(job->ctx->client->xdna,"time aie: %dms fw: %dms ipu: %dms", a, f, i);
+
 	if (status == AIE2_STATUS_SUCCESS)
 		amdxdna_cmd_set_state(cmd_abo, ERT_CMD_STATE_COMPLETED);
 	else

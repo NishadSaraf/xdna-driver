@@ -186,6 +186,7 @@ static int amdxdna_drm_set_state_ioctl(struct drm_device *dev, void *data, struc
 	if (!xdna->dev_info->ops->set_aie_state)
 		return -EOPNOTSUPP;
 
+	XDNA_INFO(xdna, "Changing the power state!!");
 	XDNA_DBG(xdna, "Request parameter %u", args->param);
 	mutex_lock(&xdna->dev_lock);
 	ret = xdna->dev_info->ops->set_aie_state(client, args);

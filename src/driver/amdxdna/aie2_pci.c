@@ -336,7 +336,8 @@ static int aie2_xrs_set_dft_dpm_level(struct drm_device *ddev, u32 dpm_level)
 	if (ndev->pw_mode != POWER_MODE_DEFAULT || ndev->dpm_level == dpm_level)
 		return 0;
 
-	return ndev->priv->hw_ops.set_dpm(ndev, dpm_level);
+	//return ndev->priv->hw_ops.set_dpm(ndev, dpm_level);
+	return 0;
 }
 
 static struct xrs_action_ops aie2_xrs_actions = {
@@ -1073,7 +1074,8 @@ static int aie2_set_power_mode(struct amdxdna_client *client, struct amdxdna_drm
 		return -EINVAL;
 	}
 
-	return aie2_pm_set_mode(xdna->dev_handle, power_mode);
+	//return aie2_pm_set_mode(xdna->dev_handle, power_mode);
+    return 0;
 }
 
 static int aie2_set_force_preempt_state(struct amdxdna_client *client,
