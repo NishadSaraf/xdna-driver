@@ -704,33 +704,44 @@ int aie2_execbuf(struct amdxdna_ctx *ctx, struct amdxdna_sched_job *job,
 
 	op = amdxdna_cmd_get_op(cmd_abo);
 	switch (op) {
-	case ERT_START_CU:
-		if (unlikely(payload_len > sizeof(req.ebuf.payload)))
-			XDNA_DBG(xdna, "Invalid ebuf payload len: %d", payload_len);
+	case ERT_START_CU: {
+		if (unlikely(payload_len > sizeof(req.ebuf.payload))) {
+			XDNA_ERR(xdna, "Invalid ebuf payload len: %d", payload_len);
+			return -EINVAL;
+		}
+
 		req.ebuf.cu_idx = cu_idx;
 		memcpy(req.ebuf.payload, payload, sizeof(req.ebuf.payload));
 		msg.send_size = sizeof(req.ebuf);
 		msg.opcode = MSG_OP_EXECUTE_BUFFER_CF;
 		break;
+	}
 	case ERT_START_NPU: {
 		struct amdxdna_cmd_start_npu *sn = payload;
+		size_t length = payload_len - sizeof(*sn);
 
-		if (unlikely(payload_len - sizeof(*sn) > sizeof(req.dpu.payload)))
-			XDNA_DBG(xdna, "Invalid dpu payload len: %d", payload_len);
+		if (unlikely(length > sizeof(req.dpu.payload))) {
+			XDNA_ERR(xdna, "Invalid dpu payload len: %ld", length);
+			return -EINVAL;
+		}
+
 		req.dpu.inst_buf_addr = sn->buffer;
 		req.dpu.inst_size = sn->buffer_size;
 		req.dpu.inst_prop_cnt = sn->prop_count;
 		req.dpu.cu_idx = cu_idx;
-		memcpy(req.dpu.payload, sn->prop_args, sizeof(req.dpu.payload));
+		memcpy(req.dpu.payload, sn->prop_args, length);
 		msg.send_size = sizeof(req.dpu);
 		msg.opcode = MSG_OP_EXEC_DPU;
 		break;
 	}
 	case ERT_START_NPU_PREEMPT: {
 		struct amdxdna_cmd_preempt_data *pd = payload;
+		size_t length = payload_len - sizeof(*pd);
 
-		if (unlikely(payload_len - sizeof(*pd) > sizeof(req.dpu.payload)))
-			XDNA_DBG(xdna, "Invalid dpu payload len: %d", payload_len);
+		if (unlikely(length > sizeof(req.dpu_pmpt.payload))) {
+			XDNA_ERR(xdna, "Invalid dpu payload len: %ld", length);
+			return -EINVAL;
+		}
 
 		req.dpu_pmpt.inst_buf_addr = pd->inst_buf;
 		req.dpu_pmpt.save_buf_addr = pd->save_buf;
@@ -740,7 +751,7 @@ int aie2_execbuf(struct amdxdna_ctx *ctx, struct amdxdna_sched_job *job,
 		req.dpu_pmpt.restore_size = pd->restore_size;
 		req.dpu_pmpt.inst_prop_cnt = pd->inst_prop_cnt;
 		req.dpu_pmpt.cu_idx = cu_idx;
-		memcpy(req.dpu_pmpt.payload, pd->prop_args, sizeof(req.dpu_pmpt.payload));
+		memcpy(req.dpu_pmpt.payload, pd->prop_args, length);
 		msg.send_size = sizeof(req.dpu_pmpt);
 		msg.opcode = MSG_OP_EXEC_DPU_PREEMPT;
 		break;
