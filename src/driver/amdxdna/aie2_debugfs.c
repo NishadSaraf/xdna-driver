@@ -376,6 +376,7 @@ static int test_case02(struct amdxdna_dev_hdl *ndev, u32 argc, const u32 *args)
 	msg.notify_cb = test_case02_cb;
 	msg.send_data = (u8 *)data;
 	msg.send_size = req_bytes;
+	msg.len = req_bytes + 16;
 
 	for (i = 0; i < cnt; i++) {
 		ret = xdna_mailbox_send_msg(ndev->mgmt_chann, &msg, TX_TIMEOUT);

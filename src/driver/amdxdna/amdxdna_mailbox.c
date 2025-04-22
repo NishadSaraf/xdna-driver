@@ -143,6 +143,7 @@ struct mailbox_msg {
 	void			*handle;
 	int			(*notify_cb)(void *handle, void __iomem *data, size_t size);
 	size_t			pkg_size; /* package size in bytes */
+	size_t			len;
 	struct mailbox_pkg	pkg;
 };
 
@@ -305,7 +306,16 @@ mailbox_send_msg(struct mailbox_channel *mb_chann, struct mailbox_msg *mb_msg)
 	}
 
 	write_addr = mb_chann->mb->res.ringbuf_base + start_addr + tail;
+
+#if 0
+	if (mb_msg->pkg_size != mb_msg->len)
+		MB_ERR(mb_chann, "nishads-> copy size reduced by: %ldB", mb_msg->pkg_size - mb_msg->len - 16);
+#endif
+#if 0
 	memcpy_toio(write_addr, &mb_msg->pkg, mb_msg->pkg_size);
+#else
+	memcpy_toio(write_addr, &mb_msg->pkg, sizeof(struct xdna_msg_header) + mb_msg->len);
+#endif
 	mailbox_set_tailptr(mb_chann, tail + mb_msg->pkg_size);
 
 	trace_mbox_set_tail(MAILBOX_NAME, mb_chann->msix_irq,
@@ -665,6 +675,7 @@ int xdna_mailbox_send_msg(struct mailbox_channel *mb_chann,
 	mb_msg->handle = msg->handle;
 	mb_msg->notify_cb = msg->notify_cb;
 	mb_msg->pkg_size = pkg_size;
+	mb_msg->len = msg->len;
 
 	header = &mb_msg->pkg.header;
 	/*

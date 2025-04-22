@@ -32,6 +32,7 @@ struct xdna_notify {
 	struct xdna_mailbox_msg msg = {					\
 		.send_data = (u8 *)&req,				\
 		.send_size = sizeof(req),				\
+		.len = 16 + sizeof(req),			\
 		.handle = &hdl,						\
 		.opcode = op,						\
 		.notify_cb = xdna_msg_cb,				\
@@ -47,6 +48,7 @@ struct xdna_dummy_notify {
 	struct xdna_mailbox_msg msg = {					\
 		.send_data = (u8 *)&req,				\
 		.send_size = sizeof(req),				\
+		.len = 16 + sizeof(req),			\
 		.handle = xdna,						\
 		.opcode = op,						\
 		.notify_cb = xdna_msg_dummy_cb,				\

@@ -25,6 +25,7 @@ struct xdna_mailbox_msg {
 	int		(*notify_cb)(void *handle, void __iomem *data, size_t size);
 	u8		*send_data;
 	size_t		send_size;
+	size_t		len;
 	int		id;
 };
 

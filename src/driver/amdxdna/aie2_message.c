@@ -603,6 +603,7 @@ int aie2_register_asyn_event_msg(struct amdxdna_dev_hdl *ndev, dma_addr_t addr, 
 	struct xdna_mailbox_msg msg = {
 		.send_data = (u8 *)&req,
 		.send_size = sizeof(req),
+		.len = sizeof(req) + 16,
 		.handle = handle,
 		.opcode = MSG_OP_REGISTER_ASYNC_EVENT_MSG,
 		.notify_cb = cb,
@@ -760,9 +761,14 @@ int aie2_execbuf(struct amdxdna_ctx *ctx, struct amdxdna_sched_job *job,
 		XDNA_DBG(xdna, "Invalid ERT cmd op code: %d", op);
 		return -EINVAL;
 	}
+
+	msg.len = payload_len;
 	msg.handle = job;
 	msg.notify_cb = notify_cb;
 	msg.send_data = (u8 *)&req;
+
+	XDNA_DBG(xdna, "nishads-> payload len: %ld", msg.len);
+	XDNA_DBG(xdna, "nishads-> send size: %ld", msg.send_size);
 #ifdef AMDXDNA_DEVEL
 	print_hex_dump_debug("cmd: ", DUMP_PREFIX_OFFSET, 16, 4, &req,
 			     msg.send_size, false);
@@ -963,6 +969,7 @@ int aie2_cmdlist_multi_execbuf(struct amdxdna_ctx *ctx,
 	msg.notify_cb = notify_cb;
 	msg.send_data = (u8 *)&req;
 	msg.send_size = sizeof(req);
+	msg.len = sizeof(req) + 16;
 	ret = xdna_mailbox_send_msg(chann, &msg, TX_TIMEOUT);
 	if (ret) {
 		XDNA_ERR(ctx->client->xdna, "Send message failed");
@@ -1000,6 +1007,7 @@ int aie2_cmdlist_single_execbuf(struct amdxdna_ctx *ctx,
 	msg.notify_cb = notify_cb;
 	msg.send_data = (u8 *)&req;
 	msg.send_size = sizeof(req);
+	msg.len = sizeof(req) + 16;
 	ret = xdna_mailbox_send_msg(chann, &msg, TX_TIMEOUT);
 	if (ret) {
 		XDNA_ERR(ctx->client->xdna, "Send message failed");
@@ -1035,6 +1043,7 @@ int aie2_sync_bo(struct amdxdna_ctx *ctx, struct amdxdna_sched_job *job,
 	msg.notify_cb = notify_cb;
 	msg.send_data = (u8 *)&req;
 	msg.send_size = sizeof(req);
+	msg.len = sizeof(req) + 16;
 	msg.opcode = MSG_OP_SYNC_BO;
 
 	ret = xdna_mailbox_send_msg(chann, &msg, TX_TIMEOUT);
@@ -1068,6 +1077,7 @@ int aie2_config_debug_bo(struct amdxdna_ctx *ctx, struct amdxdna_sched_job *job,
 	msg.notify_cb = notify_cb;
 	msg.send_data = (u8 *)&req;
 	msg.send_size = sizeof(req);
+	msg.len = sizeof(req) + 16;
 	msg.opcode = MSG_OP_CONFIG_DEBUG_BO;
 
 	ret = xdna_mailbox_send_msg(chann, &msg, TX_TIMEOUT);
