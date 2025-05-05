@@ -550,45 +550,31 @@ struct telemetry
       if (device_id != NPU4_DEVICE_ID)
         return output;
 
-      std::vector<char> payload(output_size);
-      amdxdna_drm_get_info query_ctx = {
-        .param = DRM_AMDXDNA_QUERY_HW_CONTEXTS,
-        .buffer_size = output_size,
-        .buffer = reinterpret_cast<uintptr_t>(payload.data())
+      amdxdna_drm_query_ctx_array ctx_info_array[AMDXDNA_MAX_NUM_ELEMENT];
+      amdxdna_drm_query_telemetry telemetry{};
+
+      amdxdna_drm_get_info_array query_telemetry = {
+        .param = DRM_AMDXDNA_QUERY_HW_CONTEXTS_ARRAY,
+        .element_size = sizeof(amdxdna_drm_query_ctx_array),
+        .num_element = NPU_RTOS_MAX_USER_ID_COUNT,
+        .buffer = reinterpret_cast<uintptr_t>(ctx_info_array),
+        .telemetry_buffer = reinterpret_cast<uintptr_t>(&telemetry),
+        .telemetry_size = sizeof(telemetry),
       };
 
       auto& pci_dev_impl = get_pcidev_impl(device);
-      pci_dev_impl.drv_ioctl(shim_xdna::drv_ioctl_cmd::get_info, &query_ctx);
-
-      if (output_size < query_ctx.buffer_size) {
-        throw xrt_core::query::exception(
-          boost::str(boost::format("DRM_AMDXDNA_QUERY_HW_CONTEXTS - Insufficient buffer size. Need: %u") % query_ctx.buffer_size));
-      }
-
-      uint32_t data_size = query_ctx.buffer_size / sizeof(*data);
-      data = reinterpret_cast<decltype(data)>(payload.data());
+      pci_dev_impl.drv_ioctl(shim_xdna::drv_ioctl_cmd::get_info_array, &query_telemetry);
 
       std::array<uint32_t, NPU_RTOS_MAX_USER_ID_COUNT> ctx_map{};
-      for (uint32_t i = 0; i < data_size; i++) {
-        const auto& entry = data[i];
-
-        if (entry.hwctx_id >= NPU_RTOS_MAX_USER_ID_COUNT) {
+      for (auto id = 0; id < query_telemetry.num_element; id++) {
+        if (ctx_info_array[id].hwctx_id >= NPU_RTOS_MAX_USER_ID_COUNT) {
           throw xrt_core::query::exception(
-            boost::str(boost::format("DRM_AMDXDNA_QUERY_HW_CONTEXTS - Invalid hw ctx ID: %u") % entry.hwctx_id));
+            boost::str(boost::format("DRM_AMDXDNA_QUERY_HW_CONTEXTS - Invalid hw ctx ID: %u") % ctx_info_array[id].hwctx_id));
         }
 
-        ctx_map[entry.hwctx_id] = entry.context_id;
+        ctx_map[ctx_info_array[id].hwctx_id] = ctx_info_array[id].context_id;
+
       }
-
-      amdxdna_drm_query_telemetry telemetry{};
-
-      amdxdna_drm_get_info query_telemetry = {
-        .param = DRM_AMDXDNA_QUERY_TELEMETRY,
-        .buffer_size = sizeof(telemetry),
-        .buffer = reinterpret_cast<uintptr_t>(&telemetry)
-      };
-
-      pci_dev_impl.drv_ioctl(shim_xdna::drv_ioctl_cmd::get_info, &query_telemetry);
 
       for (auto i = 0; i < NPU_RTOS_MAX_USER_ID_COUNT; i++) {
         query::rtos_telemetry::data task;
@@ -1004,7 +990,7 @@ struct sequence_name
     case xrt_core::query::sequence_name::type::tct_all_column:
       seq_name = "tct_4col.txt";
       break;
-    case xrt_core::query::sequence_name::type::gemm_int8: 
+    case xrt_core::query::sequence_name::type::gemm_int8:
       seq_name = "gemm_int8.txt";
       break;
     }

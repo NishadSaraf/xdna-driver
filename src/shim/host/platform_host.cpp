@@ -114,7 +114,7 @@ create_ctx(create_ctx_arg& ctx_arg) const
   arg.num_tiles = ctx_arg.num_tiles;
   arg.log_buf_bo = ctx_arg.log_buf_bo.handle;
   ioctl(dev_fd(), DRM_IOCTL_AMDXDNA_CREATE_CTX, &arg);
-  
+
   ctx_arg.ctx_handle = arg.handle;
   ctx_arg.umq_doorbell = arg.umq_doorbell;
   ctx_arg.syncobj_handle = arg.syncobj_handle;
@@ -309,6 +309,13 @@ platform_drv_host::
 get_info(amdxdna_drm_get_info& info) const
 {
   ioctl(dev_fd(), DRM_IOCTL_AMDXDNA_GET_INFO, &info);
+}
+
+void
+platform_drv_host::
+get_info_array(amdxdna_drm_get_info_array& info) const
+{
+  ioctl(dev_fd(), DRM_IOCTL_AMDXDNA_GET_INFO_ARRAY, &info);
 }
 
 void

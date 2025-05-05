@@ -1002,8 +1002,7 @@ out:
 	return ret;
 }
 
-static int aie2_query_telemetry(struct amdxdna_client *client,
-				struct amdxdna_drm_get_info *args)
+static int aie2_query_telemetry(struct amdxdna_client *client, void *buffer, u32 buffer_size)
 {
 	struct amdxdna_dev *xdna = client->xdna;
 	struct amdxdna_dev_hdl *ndev;
@@ -1014,18 +1013,18 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 	u32 type;
 	int ret;
 
-	if (!access_ok(u64_to_user_ptr(args->buffer), args->buffer_size)) {
-		XDNA_ERR(xdna, "Failed to access buffer size %d", args->buffer_size);
+	if (!access_ok(buffer, buffer_size)) {
+		XDNA_ERR(xdna, "Failed to access buffer size %d", buffer_size);
 		return -EFAULT;
 	}
 
-	if (copy_from_user(&type, u64_to_user_ptr(args->buffer), sizeof(type))) {
+	if (copy_from_user(&type, buffer, sizeof(type))) {
 		XDNA_ERR(xdna, "Failed to copy telemetry type from user");
 		return -EFAULT;
 	}
 
 	ndev = xdna->dev_handle;
-	aligned_sz = PAGE_ALIGN(args->buffer_size);
+	aligned_sz = PAGE_ALIGN(buffer_size);
 	buff = dma_alloc_noncoherent(xdna->ddev.dev, aligned_sz, &dma_addr,
 				     DMA_FROM_DEVICE, GFP_KERNEL);
 	if (!buff)
@@ -1036,7 +1035,7 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 	/* The first two words of the buffer is reserved for major and minor */
 	ret = aie2_query_aie_telemetry(ndev, type, dma_addr + sizeof(u64), aligned_sz, &ver);
 	if (ret) {
-		XDNA_ERR(xdna, "Get telemetry failed ret %d", ret);
+		XDNA_ERR(xdna, "Query telemetry failed ret %d", ret);
 		goto free_buf;
 	}
 
@@ -1045,7 +1044,7 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 	print_hex_dump_debug("telemetry: ", DUMP_PREFIX_OFFSET, 16, 4, buff,
 			     aligned_sz, false);
 
-	if (copy_to_user(u64_to_user_ptr(args->buffer), buff, args->buffer_size))
+	if (copy_to_user(buffer, buff, buffer_size))
 		ret = -EFAULT;
 
 free_buf:
@@ -1177,9 +1176,9 @@ static int aie2_get_info(struct amdxdna_client *client, struct amdxdna_drm_get_i
 	case DRM_AMDXDNA_GET_POWER_MODE:
 		ret = aie2_get_power_mode(client, args);
 		break;
-	case DRM_AMDXDNA_QUERY_TELEMETRY:
-		ret = aie2_query_telemetry(client, args);
-		break;
+//	case DRM_AMDXDNA_QUERY_TELEMETRY:
+//		ret = aie2_query_telemetry(client, args);
+//		break;
 	case DRM_AMDXDNA_GET_FORCE_PREEMPT_STATE:
 		ret = aie2_get_force_preempt_state(client, args);
 		break;
@@ -1208,6 +1207,7 @@ static int aie2_query_ctx_status_array(struct amdxdna_client *client,
 	struct amdxdna_dev *xdna = client->xdna;
 	int idx, ctx_limit, ctx_cnt, min, i;
 	struct amdxdna_client *tmp_client;
+	void __user *telemetry_buffer;
 	struct amdxdna_ctx *ctx;
 	unsigned long ctx_id;
 	u32 hw_i = 0;
@@ -1237,6 +1237,17 @@ static int aie2_query_ctx_status_array(struct amdxdna_client *client,
 		return -ENOMEM;
 
 	mutex_lock(&xdna->dev_lock);
+
+	telemetry_buffer = u64_to_user_ptr(args->telemetry_buffer);
+	if (args->telemetry_size && telemetry_buffer) {
+		ret = aie2_query_telemetry(client, telemetry_buffer, args->telemetry_size);
+		if (ret) {
+			mutex_unlock(&xdna->dev_lock);
+			kfree(tmp);
+			return ret;
+		}
+	}
+
 	list_for_each_entry(tmp_client, &xdna->client_list, node) {
 		int heap_usage;
 
@@ -1278,6 +1289,7 @@ static int aie2_query_ctx_status_array(struct amdxdna_client *client,
 		}
 		srcu_read_unlock(&tmp_client->ctx_srcu, idx);
 	}
+
 	mutex_unlock(&xdna->dev_lock);
 
 	min = min(args->element_size, sizeof(*tmp));

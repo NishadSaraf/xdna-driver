@@ -630,6 +630,8 @@ struct amdxdna_drm_get_info_array {
 	__u32 num_element; /* in/out */
 	__u32 pad;
 	__u64 buffer; /* in/out */
+	__u64 telemetry_buffer;
+	__u32 telemetry_size;
 };
 
 /**
