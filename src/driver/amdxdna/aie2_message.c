@@ -265,8 +265,8 @@ int aie2_check_protocol_version(struct amdxdna_dev_hdl *ndev)
 	return 0;
 }
 
-int aie2_query_aie_telemetry(struct amdxdna_dev_hdl *ndev, u32 type, dma_addr_t addr,
-			     u32 size, struct aie_version *version)
+int aie2_query_aie_telemetry(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
+			     u32 type, u32 size, struct aie_version *version)
 {
 	DECLARE_AIE2_MSG(get_telemetry, MSG_OP_GET_TELEMETRY);
 	struct amdxdna_dev *xdna = ndev->xdna;
@@ -277,7 +277,7 @@ int aie2_query_aie_telemetry(struct amdxdna_dev_hdl *ndev, u32 type, dma_addr_t 
 		return -EINVAL;
 	}
 
-	req.buf_addr = addr;
+	req.buf_addr = aie2_mgmt_buff_get_dma_addr(mgmt_hdl);
 	req.buf_size = size;
 	req.type = type;
 
@@ -563,12 +563,11 @@ int aie2_query_aie_status(struct amdxdna_dev_hdl *ndev, char __user *buf,
 {
 	DECLARE_AIE2_MSG(aie_column_info, MSG_OP_QUERY_COL_STATUS);
 	struct amdxdna_dev *xdna = ndev->xdna;
+	struct aie2_mgmt_dma_hdl mgmt_hdl;
 	struct amdxdna_client *client;
 	struct amdxdna_ctx *ctx;
 	unsigned long ctx_id;
-	dma_addr_t dma_addr;
 	u32 aie_bitmap = 0;
-	size_t buff_sz;
 	u8 *buff_addr;
 	int ret, idx;
 
@@ -577,7 +576,7 @@ int aie2_query_aie_status(struct amdxdna_dev_hdl *ndev, char __user *buf,
 		return -EFAULT;
 	}
 
-	buff_addr = aie2_mgmt_buff_alloc(ndev, size, &buff_sz, &dma_addr);
+	buff_addr = aie2_mgmt_buff_alloc(ndev, &mgmt_hdl, size, DMA_FROM_DEVICE);
 	if (!buff_addr)
 		return -ENOMEM;
 
@@ -590,12 +589,12 @@ int aie2_query_aie_status(struct amdxdna_dev_hdl *ndev, char __user *buf,
 	}
 
 	*cols_filled = 0;
-	req.dump_buff_addr = dma_addr;
+	req.dump_buff_addr = aie2_mgmt_buff_get_dma_addr(&mgmt_hdl);
 	req.dump_buff_size = size;
 	req.num_cols = hweight32(aie_bitmap);
 	req.aie_bitmap = aie_bitmap;
 
-	drm_clflush_virt_range(buff_addr, size); /* device can access */
+//	drm_clflush_virt_range(buff_addr, size); /* device can access */
 	ret = aie2_send_mgmt_msg_wait(ndev, &msg);
 	if (ret) {
 		XDNA_ERR(xdna, "Error during NPU query, status %d", ret);
@@ -624,11 +623,11 @@ int aie2_query_aie_status(struct amdxdna_dev_hdl *ndev, char __user *buf,
 	*cols_filled = aie_bitmap;
 
 fail:
-	aie2_mgmt_buff_free(ndev, buff_sz, buff_addr, dma_addr);
+	aie2_mgmt_buff_free(&mgmt_hdl);
 	return ret;
 }
 
-int aie2_register_asyn_event_msg(struct amdxdna_dev_hdl *ndev, dma_addr_t addr, u32 size,
+int aie2_register_asyn_event_msg(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
 				 void *handle, int (*cb)(void*, void __iomem *, size_t))
 {
 	struct async_event_msg_req req = { 0 };
@@ -640,23 +639,23 @@ int aie2_register_asyn_event_msg(struct amdxdna_dev_hdl *ndev, dma_addr_t addr, 
 		.notify_cb = cb,
 	};
 
-	req.buf_addr = addr;
-	req.buf_size = size;
+	req.buf_addr = aie2_mgmt_buff_get_dma_addr(mgmt_hdl);
+	req.buf_size = ASYNC_BUF_SIZE;
 
-	XDNA_DBG(ndev->xdna, "Register addr 0x%llx size 0x%x", addr, size);
+	XDNA_DBG(ndev->xdna, "Register addr 0x%llx size 0x%x", req.buf_addr, req.buf_size);
 	return xdna_mailbox_send_msg(ndev->mgmt_chann, &msg, TX_TIMEOUT);
 }
 
-int aie2_get_app_health(struct amdxdna_dev_hdl *ndev, u32 context_id,
-			dma_addr_t addr, u32 size)
+int aie2_get_app_health(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
+			u32 context_id, u32 size)
 {
 	DECLARE_AIE2_MSG(get_app_health, MSG_OP_GET_APP_HEALTH);
 	struct amdxdna_dev *xdna = ndev->xdna;
 	int ret;
 
+	req.buf_addr = aie2_mgmt_buff_get_dma_addr(mgmt_hdl);
 	req.context_id = context_id;
 	req.buf_size = size;
-	req.buf_addr = addr;
 
 	ret = aie2_send_mgmt_msg_wait_silent(ndev, &msg);
 	if (ret) {

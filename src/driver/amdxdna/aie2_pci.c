@@ -1004,9 +1004,9 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 {
 	struct amdxdna_drm_query_telemetry_header header, *tmp;
 	struct amdxdna_dev *xdna = client->xdna;
-	size_t aligned_sz, buff_sz, offset;
+	struct aie2_mgmt_dma_hdl mgmt_hdl;
 	struct aie_version ver;
-	dma_addr_t dma_addr;
+	size_t size, offset;
 	void *buff;
 	int ret, i;
 
@@ -1020,26 +1020,32 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 		return -EFAULT;
 	}
 
-	aligned_sz = PAGE_ALIGN(args->buffer_size);
-	buff = aie2_mgmt_buff_alloc(xdna->dev_handle, aligned_sz, &buff_sz, &dma_addr);
+	header.map_num_elements = xdna->dev_handle->ctx_rq.hwctx_limit;
+	offset = struct_size(&header, map, header.map_num_elements);
+	if (args->buffer_size < offset)
+		return -EINVAL;
+
+	size = args->buffer_size - offset;
+
+	buff = aie2_mgmt_buff_alloc(xdna->dev_handle, &mgmt_hdl, size, DMA_FROM_DEVICE);
 	if (!buff)
 		return -ENOMEM;
 
-	memset(buff, 0, aligned_sz);
+	//memset(buff, 0, size);
+	//aie2_mgmt_buff_clflush(&mgmt_hdl);
 
-	drm_clflush_virt_range(buff, aligned_sz); /* device can access */
-
-	/* Reserve enough space for the driver to copy context map in the user buffer */
-	header.map_num_elements = xdna->dev_handle->ctx_rq.hwctx_limit;
-	offset = struct_size(&header, map, header.map_num_elements);
-	ret = aie2_query_aie_telemetry(xdna->dev_handle, header.type, dma_addr + offset,
-				       aligned_sz - offset, &ver);
+	ret = aie2_query_aie_telemetry(xdna->dev_handle, &mgmt_hdl, header.type, size, &ver);
 	if (ret) {
 		XDNA_ERR(xdna, "Get telemetry failed ret %d", ret);
 		goto free_buf;
 	}
 
-	tmp = (struct amdxdna_drm_query_telemetry_header *)buff;
+	tmp = kzalloc(offset, GFP_KERNEL);
+	if (!tmp) {
+		ret = -ENOMEM;
+		goto free_buf;
+	}
+
 	tmp->map_num_elements = header.map_num_elements;
 	tmp->type = header.type;
 	tmp->major = ver.major;
@@ -1054,14 +1060,19 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 		}
 	}
 
-	print_hex_dump_debug("telemetry: ", DUMP_PREFIX_OFFSET, 16, 4, buff,
-			     aligned_sz, false);
+	print_hex_dump_debug("telemetry: ", DUMP_PREFIX_OFFSET, 16, 4, buff, size, false);
 
-	if (copy_to_user(u64_to_user_ptr(args->buffer), buff, args->buffer_size))
+	if (copy_to_user(u64_to_user_ptr(args->buffer), tmp, offset)) {
+		ret = -EFAULT;
+		goto free_buf;
+	}
+
+	if (copy_to_user(u64_to_user_ptr(args->buffer + offset), buff, size))
 		ret = -EFAULT;
 
 free_buf:
-	aie2_mgmt_buff_free(xdna->dev_handle, buff_sz, buff, dma_addr);
+	kfree(tmp);
+	aie2_mgmt_buff_free(&mgmt_hdl);
 	return ret;
 }
 
@@ -1445,18 +1456,13 @@ static int aie2_set_state(struct amdxdna_client *client, struct amdxdna_drm_set_
 	return ret;
 }
 
-#define SPAN_64M_BOUNDARY(addr, size) \
-	((((unsigned long)(addr) & ((SZ_64M) - 1)) + (size)) > (SZ_64M))
-void *aie2_mgmt_buff_alloc(struct amdxdna_dev_hdl *ndev, size_t size, size_t *aligned_sz,
-			   dma_addr_t *dma_handle)
+void *aie2_mgmt_buff_alloc(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
+			   size_t size, enum dma_data_direction dir)
 {
 	struct amdxdna_dev *xdna = ndev->xdna;
-	void *buf;
 
-	size = PAGE_ALIGN(size);
-	*aligned_sz = roundup_pow_of_two(size);
-	/* TODO: This workaround a FW issue. Remove this later */
-	*aligned_sz *= 2;
+	if (!size || size > SZ_4M)
+		return NULL;
 
 	/*
 	 * Note: We test the behavior of dma_alloc_noncoherent() on 6.13 kernel.
@@ -1468,30 +1474,44 @@ void *aie2_mgmt_buff_alloc(struct amdxdna_dev_hdl *ndev, size_t size, size_t *al
 	 * Thoughts, if there is requirement for larger than 4MB physical
 	 * contiguous memory, consider allocate buffer from carvedout memory?
 	 */
-	buf = dma_alloc_noncoherent(xdna->ddev.dev, *aligned_sz, dma_handle,
-				    DMA_BIDIRECTIONAL, GFP_KERNEL);
-	if (!buf)
+	mgmt_hdl->vaddr = dma_alloc_noncoherent(xdna->ddev.dev, SZ_4M, &mgmt_hdl->dma_hdl, dir,
+						GFP_KERNEL);
+	if (!mgmt_hdl->vaddr)
 		return NULL;
 
-	/*
-	 * FW doesn't allow buffer spans 64MB boundary.
-	 * Satisfied this by below two facts,
-	 * 1. The aligned_sz is power of 2 pages
-	 * 2. dma_alloc_noncoherent() should return size aligned dma_handle.
-	 *
-	 * If any of above changed, you will see WARN_ON.
-	 */
-	WARN_ON(SPAN_64M_BOUNDARY(*dma_handle, *aligned_sz));
+	mgmt_hdl->aligned_size = SZ_4M;
+	mgmt_hdl->size = size;
+	mgmt_hdl->xdna = xdna;
+	mgmt_hdl->dir = dir;
 
-	return buf;
+	return mgmt_hdl->vaddr;
 }
 
-void aie2_mgmt_buff_free(struct amdxdna_dev_hdl *ndev, size_t aligned_sz,
-			 void *vaddr, dma_addr_t dma_handle)
+void aie2_mgmt_buff_clflush(struct aie2_mgmt_dma_hdl *mgmt_hdl)
 {
-	struct amdxdna_dev *xdna = ndev->xdna;
+	drm_clflush_virt_range(mgmt_hdl->vaddr, mgmt_hdl->size);
+}
 
-	dma_free_noncoherent(xdna->ddev.dev, aligned_sz, vaddr, dma_handle, DMA_FROM_DEVICE);
+dma_addr_t aie2_mgmt_buff_get_dma_addr(struct aie2_mgmt_dma_hdl *mgmt_hdl)
+{
+	if (mgmt_hdl->aligned_size != SZ_4M)
+		return 0;
+
+	return mgmt_hdl->dma_hdl;
+}
+
+void *aie2_mgmt_buff_get_cpu_addr(struct aie2_mgmt_dma_hdl *mgmt_hdl)
+{
+	if (mgmt_hdl->aligned_size != SZ_4M)
+		return NULL;
+
+	return mgmt_hdl->vaddr;
+}
+
+void aie2_mgmt_buff_free(struct aie2_mgmt_dma_hdl *mgmt_hdl)
+{
+	dma_free_noncoherent(mgmt_hdl->xdna->ddev.dev, mgmt_hdl->aligned_size, mgmt_hdl->vaddr,
+			     mgmt_hdl->dma_hdl, mgmt_hdl->dir);
 }
 
 const struct amdxdna_dev_ops aie2_ops = {
