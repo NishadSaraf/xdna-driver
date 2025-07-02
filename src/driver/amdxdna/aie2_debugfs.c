@@ -700,7 +700,7 @@ static int aie2_telemetry(struct seq_file *m, u32 type)
 	if (!buff)
 		return -ENOMEM;
 
-	//drm_clflush_virt_range(buff, size); /* device can access */
+	aie2_mgmt_buff_clflush(&mgmt_hdl);
 	mutex_lock(&ndev->aie2_lock);
 	ret = aie2_query_aie_telemetry(ndev, &mgmt_hdl, type, size, NULL);
 	mutex_unlock(&ndev->aie2_lock);
@@ -774,7 +774,7 @@ static int aie2_get_app_health_show(struct seq_file *m, void *unused)
 	if (!buff)
 		return -ENOMEM;
 
-//	drm_clflush_virt_range(buff, size); /* device can access */
+	aie2_mgmt_buff_clflush(&mgmt_hdl);
 	mutex_lock(&ndev->aie2_lock);
 	/* Just for debug, always check context id 1 */
 	ret = aie2_get_app_health(ndev, &mgmt_hdl, 1, size);

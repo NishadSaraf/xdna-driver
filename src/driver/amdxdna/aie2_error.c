@@ -216,7 +216,7 @@ static int aie2_error_async_cb(void *handle, void __iomem *data, size_t size)
 
 static int aie2_error_event_send(struct async_event *e)
 {
-//	drm_clflush_virt_range(e->buf, e->size); /* device can access */
+	aie2_mgmt_buff_clflush(&e->mgmt_hdl);
 	return aie2_register_asyn_event_msg(e->ndev, &e->mgmt_hdl, e, aie2_error_async_cb);
 }
 
@@ -237,8 +237,8 @@ static void aie2_error_worker(struct work_struct *err_work)
 
 	e->resp.status = MAX_AIE2_STATUS_CODE;
 
-//	print_hex_dump_debug("AIE error: ", DUMP_PREFIX_OFFSET, 16, 4,
-//			     aie2_mgmt_buff_get_cpu_addr(e->mgmt_hdl), 0x100, false);
+	print_hex_dump_debug("AIE error: ", DUMP_PREFIX_OFFSET, 16, 4,
+			     aie2_mgmt_buff_get_cpu_addr(&e->mgmt_hdl), 0x100, false);
 
 	info = (struct aie_err_info *)aie2_mgmt_buff_get_cpu_addr(&e->mgmt_hdl);
 	XDNA_DBG(xdna, "Error count %d return code %d", info->err_cnt, info->ret_code);

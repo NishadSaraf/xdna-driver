@@ -1032,7 +1032,7 @@ static int aie2_query_telemetry(struct amdxdna_client *client,
 		return -ENOMEM;
 
 	//memset(buff, 0, size);
-	//aie2_mgmt_buff_clflush(&mgmt_hdl);
+	aie2_mgmt_buff_clflush(&mgmt_hdl);
 
 	ret = aie2_query_aie_telemetry(xdna->dev_handle, &mgmt_hdl, header.type, size, &ver);
 	if (ret) {

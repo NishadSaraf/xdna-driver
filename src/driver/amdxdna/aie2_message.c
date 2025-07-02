@@ -594,7 +594,7 @@ int aie2_query_aie_status(struct amdxdna_dev_hdl *ndev, char __user *buf,
 	req.num_cols = hweight32(aie_bitmap);
 	req.aie_bitmap = aie_bitmap;
 
-//	drm_clflush_virt_range(buff_addr, size); /* device can access */
+	aie2_mgmt_buff_clflush(&mgmt_hdl);
 	ret = aie2_send_mgmt_msg_wait(ndev, &msg);
 	if (ret) {
 		XDNA_ERR(xdna, "Error during NPU query, status %d", ret);
