@@ -16,7 +16,7 @@ get_heap_num_pages()
   static unsigned int num = 0;
 
   if (!num)
-    num = xrt_core::config::detail::get_uint_value("Debug.num_heap_pages", 1);
+    num = xrt_core::config::detail::get_uint_value("Debug.num_heap_pages", 4);
   return num;
 }
 
@@ -31,6 +31,7 @@ on_first_open() const
   auto heap_sz = heap_page_size * get_heap_num_pages();
   // Alloc device memory on first device open.
   m_dev_heap_bo = std::make_unique<buffer>(*this, heap_sz, AMDXDNA_BO_DEV_HEAP);
+  shim_debug("Alocated %d heap pages ", get_heap_num_pages());
 }
 
 void

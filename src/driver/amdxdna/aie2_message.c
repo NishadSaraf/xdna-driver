@@ -537,6 +537,7 @@ int aie2_map_host_buf(struct amdxdna_dev_hdl *ndev, u32 context_id, u64 addr, u6
 	size_t chunk_size;
 	int ret;
 
+	// TODO: Check size must to be multiples of 64M
 	chunk_size = xdna->dev_info->dev_mem_size;
 	WARN_ON(!is_power_of_2(chunk_size));
 	WARN_ON(!IS_ALIGNED(size, chunk_size));
