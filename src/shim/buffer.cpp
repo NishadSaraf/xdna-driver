@@ -121,7 +121,7 @@ to_hex_string(uint64_t num) {
   ss << "0x" << std::hex << num;
   return ss.str();
 }
- 
+
 inline void flush_cache_line(const char *cur)
 {
 #if defined(__x86_64__) || defined(_M_X64)
@@ -271,7 +271,7 @@ drm_bo(const pdev& pdev, size_t size, int type)
   create_bo_arg arg = {
     .type = type,
     .size = m_size,
-    .xdna_addr_align = (align == 1 ? 0 : align), 
+    .xdna_addr_align = (align == 1 ? 0 : align),
   };
   if (type == AMDXDNA_BO_DEV)
     m_pdev.create_drm_dev_bo(&arg);
@@ -413,7 +413,7 @@ expand(size_t size)
 
   m_bos.push_back(std::move(bo));
   m_cur_size += size;
-  
+
   // Newly allocated buffer may contain dirty pages. If used as output buffer,
   // the data in cacheline will be flushed onto memory and pollute the output
   // from device. We perform a cache flush right after the BO is allocated to
@@ -481,14 +481,14 @@ unmap(void *addr)
 
 buffer::properties
 buffer::
-get_properties() const 
+get_properties() const
 {
   return { m_flags, size(), paddr(), id().handle };
 }
 
 std::unique_ptr<xrt_core::shared_handle>
 buffer::
-share() const 
+share() const
 {
   export_bo_arg arg = {
     .bo = id(),
@@ -607,7 +607,7 @@ sync(direction, size_t sz, size_t offset)
     return;
   }
 
-  clflush_data(vaddr(), offset, sz); 
+  clflush_data(vaddr(), offset, sz);
   shim_debug("Sync'ed BO %d: offset=%ld, size=%ld", id().handle, offset, sz);
 }
 

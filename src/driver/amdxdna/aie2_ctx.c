@@ -574,7 +574,9 @@ int aie2_ctx_init(struct amdxdna_ctx *ctx)
 	ctx->priv->orig_num_col = ctx->num_tiles / ndev->metadata.core.row_count;
 	ctx->max_opc = ndev->priv->col_opc * ctx->priv->orig_num_col;
 	mutex_lock(&client->mm_lock);
-	heap = client->dev_heap;
+	// TODO: Client device heap object maynot exist and this is a valid for dynamic heap
+	// allocation
+	heap = client->heap->gobj[0];
 	if (!heap) {
 		XDNA_ERR(xdna, "The client dev heap object not exist");
 		mutex_unlock(&client->mm_lock);
@@ -586,12 +588,14 @@ int aie2_ctx_init(struct amdxdna_ctx *ctx)
 	priv->heap = heap;
 	sema_init(&priv->job_sem, CTX_MAX_CMDS);
 
+	// TODO: Pin pages if only heap is allocated
 	ret = amdxdna_gem_pin(heap);
 	if (ret) {
 		XDNA_ERR(xdna, "Dev heap pin failed, ret %d", ret);
 		goto put_heap;
 	}
 
+	// TODO: Command buffer allocation is only possible if HEAP is allocated
 	for (i = 0; i < ARRAY_SIZE(priv->cmd_buf); i++) {
 		struct amdxdna_gem_obj *abo;
 		struct amdxdna_drm_create_bo args = {

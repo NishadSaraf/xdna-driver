@@ -21,6 +21,7 @@ static int amdxdna_drm_open(struct drm_device *ddev, struct drm_file *filp)
 {
 	struct amdxdna_dev *xdna = to_xdna_dev(ddev);
 	struct amdxdna_client *client;
+	struct amdxdna_dev_heap *heap;
 	int ret;
 
 	client = kzalloc(sizeof(*client), GFP_KERNEL);
@@ -65,9 +66,28 @@ skip_sva_bind:
 	filp->driver_priv = client;
 	client->filp = filp;
 
+	// TODO: This needs to done one level up and size has to be 512M for STX and 64M for PHX
+	//drm_mm_init(&abo->mm, abo->mem.dev_addr, abo->mem.size);
+
+	heap = kzalloc(struct_size(heap, gobj, xdna->dev_info->dev_mem_max_bank_count), GFP_KERNEL);
+	if (!heap) {
+		XDNA_ERR(xdna, "Failed to allocate heap bank record");
+		goto cleanup;
+	}
+
+	heap->max_banks = xdna->dev_info->dev_mem_max_bank_count;
+	for (int i = 0; i < heap->max_banks; i++)
+		heap->gobj[i] = NULL;
+
+	client->heap = heap;
+
 	XDNA_DBG(xdna, "PID %d opened", client->pid);
 	return 0;
 
+cleanup:
+	mutex_destroy(&client->mm_lock);
+	xa_destroy(&client->ctx_xa);
+	cleanup_srcu_struct(&client->ctx_srcu);
 unbind_sva:
 	iommu_sva_unbind_device(client->sva);
 failed:
@@ -82,12 +102,16 @@ static void amdxdna_drm_close(struct drm_device *ddev, struct drm_file *filp)
 
 	XDNA_DBG(xdna, "Closing PID %d", client->pid);
 
+	// TODO: Iterate over all allocate banks
+	if (client->heap->valid_banks) {
+		for (int i = 0; i < client->heap->valid_banks; i++)
+			drm_gem_object_put(to_gobj(client->heap->gobj[i]));
+	}
+
+	kfree(client->heap);
+	mutex_destroy(&client->mm_lock);
 	xa_destroy(&client->ctx_xa);
 	cleanup_srcu_struct(&client->ctx_srcu);
-	mutex_destroy(&client->mm_lock);
-	if (client->dev_heap)
-		drm_gem_object_put(to_gobj(client->dev_heap));
-
 #ifdef AMDXDNA_DEVEL
 	if (iommu_mode != AMDXDNA_IOMMU_PASID)
 		goto skip_sva_unbind;

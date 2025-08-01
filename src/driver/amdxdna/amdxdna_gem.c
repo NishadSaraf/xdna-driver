@@ -45,7 +45,7 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 
 	mutex_lock(&client->mm_lock);
 
-	heap = client->dev_heap;
+	heap = client->heap->gobj[0];
 	if (!heap) {
 		mutex_unlock(&client->mm_lock);
 		return -EINVAL;
@@ -57,6 +57,7 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 		return -EINVAL;
 	}
 
+	// TODO: ADD_HOST_MEM here?
 	if (mem->size == 0 || mem->size > heap->mem.size) {
 		XDNA_ERR(xdna, "Invalid dev bo size 0x%lx, limit 0x%lx",
 			 mem->size, heap->mem.size);
@@ -66,15 +67,17 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 
 	if (heap->mem.pages)
 		pages = heap->mem.pages;
-	else if (client->dev_heap->base.pages)
+	else if (client->heap->gobj[0]->base.pages)
 		pages = heap->base.pages;
 
-	align = 1 << max(PAGE_SHIFT, xdna->dev_info->dev_mem_buf_shift);
+	align = 1 << max(PAGE_SHIFT, xdna->dev_info->dev_mem_buf_shift); /* 32kb aligned */
+
+	// TODO: Remove the below condition check
 	if (heap->mem.size > SZ_64M) {
 		/* TODO: remove this hack code path once FW is updated */
 		u64 threshold = SZ_64M; /* Determine small or large buffer */
 
-		XDNA_INFO(xdna, "Large heap allocation hack");
+		//XDNA_INFO(xdna, "Large heap allocation hack");
 		if (mem->size > threshold) {
 			XDNA_INFO(xdna, "Large buffer allocate start from bank 1");
 			ret = drm_mm_insert_node_in_range(&heap->mm, &abo->mm_node,
@@ -83,7 +86,7 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 							  U64_MAX /* let DRM determine */,
 							  DRM_MM_INSERT_BEST);
 		} else {
-			XDNA_INFO(xdna, "Small buffer allocate in bank 0");
+			//XDNA_INFO(xdna, "Small buffer allocate in bank 0");
 			ret = drm_mm_insert_node_in_range(&heap->mm, &abo->mm_node,
 							  mem->size, align, 0,
 							  heap->mem.dev_addr /* start */,
@@ -100,10 +103,10 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 		return ret;
 	}
 
-	client->heap_usage += mem->size;
+	client->heap->usage += mem->size;
 	mem->dev_addr = abo->mm_node.start;
-	offset = mem->dev_addr - client->dev_heap->mem.dev_addr;
-	mem->userptr = client->dev_heap->mem.userptr + offset;
+	offset = mem->dev_addr - client->heap->gobj[0]->mem.dev_addr;
+	mem->userptr = client->heap->gobj[0]->mem.userptr + offset;
 
 	if (pages) {
 		mem->pages = &pages[offset >> PAGE_SHIFT];
@@ -123,9 +126,9 @@ amdxdna_gem_heap_free(struct amdxdna_gem_obj *abo)
 
 	if (abo->mem.dev_addr != AMDXDNA_INVALID_ADDR) {
 		drm_mm_remove_node(&abo->mm_node);
-		abo->client->heap_usage -= abo->mem.size;
+		abo->client->heap->usage -= abo->mem.size;
 	}
-	drm_gem_object_put(to_gobj(abo->client->dev_heap));
+	drm_gem_object_put(to_gobj(abo->client->heap->gobj[0]));
 
 	mutex_unlock(&abo->client->mm_lock);
 }
@@ -342,12 +345,12 @@ static void amdxdna_gem_dev_obj_free(struct drm_gem_object *gobj)
 		amdxdna_gem_unpin(abo);
 
 	if (abo->mem.kva) {
-		offset = abo->mem.dev_addr - client->dev_heap->mem.dev_addr;
+		offset = abo->mem.dev_addr - client->heap->gobj[0]->mem.dev_addr;
 		iosys_map_set_vaddr(&heap_map, abo->mem.kva - offset);
 #if KERNEL_VERSION(6, 16, 0) > LINUX_VERSION_CODE
-		drm_gem_vunmap_unlocked(to_gobj(client->dev_heap), &heap_map);
+		drm_gem_vunmap_unlocked(to_gobj(client->heap->gobj[0]), &heap_map);
 #else
-		drm_gem_vunmap(to_gobj(client->dev_heap), &heap_map);
+		drm_gem_vunmap(to_gobj(client->heap->gobj[0]), &heap_map);
 #endif
 	}
 
@@ -811,6 +814,7 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 			       struct amdxdna_drm_create_bo *args, struct drm_file *filp)
 {
 	struct amdxdna_client *client = filp->driver_priv;
+	struct amdxdna_dev_heap *heap = client->heap;
 	struct amdxdna_dev *xdna = to_xdna_dev(dev);
 	struct amdxdna_gem_obj *abo;
 	int ret;
@@ -823,11 +827,13 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 	}
 
 	mutex_lock(&client->mm_lock);
-	if (client->dev_heap) {
+	/*
+	if (client->heap->gobj[0]) {
 		XDNA_ERR(client->xdna, "dev heap is already created");
 		ret = -EBUSY;
 		goto mm_unlock;
 	}
+	*/
 
 	abo = amdxdna_gem_create_share_object(dev, args);
 	if (IS_ERR(abo)) {
@@ -837,7 +843,9 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 
 	abo->type = AMDXDNA_BO_DEV_HEAP;
 	abo->client = client;
+	// TODO: Track the valid bank ID and and multiple it by the base
 	abo->mem.dev_addr = client->xdna->dev_info->dev_mem_base;
+	// TODO: This needs to done one level up and size has to be 512M for STX and 64M for PHX
 	drm_mm_init(&abo->mm, abo->mem.dev_addr, abo->mem.size);
 
 #ifdef AMDXDNA_DEVEL
@@ -849,7 +857,7 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 		}
 	}
 #endif
-	client->dev_heap = abo;
+	heap->gobj[heap->valid_banks++] = abo;
 	drm_gem_object_get(to_gobj(abo));
 	mutex_unlock(&client->mm_lock);
 
@@ -890,16 +898,16 @@ amdxdna_drm_create_dev_bo(struct drm_device *dev, struct amdxdna_drm_create_bo *
 	drm_gem_private_object_init(dev, gobj, aligned_sz);
 
 #if KERNEL_VERSION(6, 16, 0) > LINUX_VERSION_CODE
-	ret = drm_gem_vmap_unlocked(to_gobj(client->dev_heap), &map);
+	ret = drm_gem_vmap_unlocked(to_gobj(client->heap->gobj[0]), &map);
 #else
-	ret = drm_gem_vmap(to_gobj(client->dev_heap), &map);
+	ret = drm_gem_vmap(to_gobj(client->heap->gobj[0]), &map);
 #endif
 	if (ret) {
 		XDNA_ERR(xdna, "Vmap dev bo failed, ret %d", ret);
 		drm_gem_object_put(gobj);
 		return ERR_PTR(ret);
 	}
-	abo->mem.kva = map.vaddr + abo->mem.dev_addr - client->dev_heap->mem.dev_addr;
+	abo->mem.kva = map.vaddr + abo->mem.dev_addr - client->heap->gobj[0]->mem.dev_addr;
 
 	return abo;
 }
@@ -1024,7 +1032,7 @@ int amdxdna_gem_pin_nolock(struct amdxdna_gem_obj *abo)
 	int ret;
 
 	if (abo->type == AMDXDNA_BO_DEV)
-		abo = abo->client->dev_heap;
+		abo = abo->client->heap->gobj[0];
 
 	if (is_import_bo(abo))
 		return 0;
@@ -1049,7 +1057,7 @@ int amdxdna_gem_pin(struct amdxdna_gem_obj *abo)
 void amdxdna_gem_unpin(struct amdxdna_gem_obj *abo)
 {
 	if (abo->type == AMDXDNA_BO_DEV)
-		abo = abo->client->dev_heap;
+		abo = abo->client->heap->gobj[0];
 
 	if (is_import_bo(abo))
 		return;

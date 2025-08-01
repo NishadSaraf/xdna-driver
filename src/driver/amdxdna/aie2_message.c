@@ -538,6 +538,7 @@ int aie2_map_host_buf(struct amdxdna_dev_hdl *ndev, u32 context_id, u64 addr, u6
 	int ret;
 
 	// TODO: Check size must to be multiples of 64M
+	// TODO: Do we also need to remap all the existing banks?
 	chunk_size = xdna->dev_info->dev_mem_size;
 	WARN_ON(!is_power_of_2(chunk_size));
 	WARN_ON(!IS_ALIGNED(size, chunk_size));
@@ -1369,7 +1370,7 @@ int aie2_config_debug_bo(struct amdxdna_ctx *ctx, struct amdxdna_sched_job *job,
 	int ret;
 
 	req.config = (job->opcode == OP_REG_DEBUG_BO) ? REGISTER : UNREGISTER;
-	req.offset = abo->mem.dev_addr - ctx->client->dev_heap->mem.dev_addr;
+	req.offset = abo->mem.dev_addr - ctx->client->heap->gobj[0]->mem.dev_addr;
 	req.size = abo->mem.size;
 
 	XDNA_DBG(xdna, "offset 0x%llx size 0x%llx config %d",

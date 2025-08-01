@@ -1273,7 +1273,7 @@ static int aie2_query_ctx_status_array(struct amdxdna_client *client,
 		int heap_usage;
 
 		mutex_lock(&tmp_client->mm_lock);
-		heap_usage = tmp_client->heap_usage;
+		heap_usage = tmp_client->heap->usage;
 		mutex_unlock(&tmp_client->mm_lock);
 
 		idx = srcu_read_lock(&tmp_client->ctx_srcu);

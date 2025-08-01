@@ -88,6 +88,7 @@ struct amdxdna_dev_ops {
  * @device_type: type of the device
  * @first_col: First column for application
  * @dev_mem_buf_shift: heap buffer alignment shift
+ * @dev_mem_max_bank_count: maximum number of banks that can be allocated
  * @dev_mem_base: Base address of device heap memory
  * @dev_mem_size: Size of device heap memory
  * @vbnv: the VBNV string
@@ -103,6 +104,7 @@ struct amdxdna_dev_info {
 	int				device_type;
 	int				first_col;
 	u32				dev_mem_buf_shift;
+	u32				dev_mem_max_bank_count;
 	u64				dev_mem_base;
 	size_t				dev_mem_size;
 	char				*vbnv;
@@ -141,6 +143,13 @@ struct amdxdna_stats {
 	u64				busy_time;
 };
 
+struct amdxdna_dev_heap {
+	u32				usage;
+	u32				valid_banks;
+	u32				max_banks;
+	struct amdxdna_gem_obj		*gobj[] __counted_by(max_banks);
+};
+
 /*
  * struct amdxdna_client - amdxdna client
  * A per fd data structure for managing context and other user process stuffs.
@@ -149,6 +158,7 @@ struct amdxdna_stats {
  * @pid: PID of current client
  * @ctx_srcu: Per client SRCU for synchronizing ctx destroy with other ioctls.
  * @ctx_xa: context xarray
+ * @next_ctxid: xa next id placeholder
  * @xdna: XDNA device pointer
  * @filp: DRM file pointer
  * @mm_lock: lock for client wide memory related
@@ -169,13 +179,13 @@ struct amdxdna_client {
 	struct drm_file			*filp;
 
 	struct mutex			mm_lock; /* protect memory related */
-	struct amdxdna_gem_obj		*dev_heap;
-	u32				heap_usage;
 
 	struct iommu_sva		*sva;
 	int				pasid;
 
 	struct amdxdna_stats		stats;
+
+	struct amdxdna_dev_heap		*heap;
 };
 
 #define amdxdna_for_each_ctx(client, ctx_id, entry)		\

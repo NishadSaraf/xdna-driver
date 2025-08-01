@@ -108,17 +108,18 @@ const struct amdxdna_dev_priv npu1_dev_priv = {
 };
 
 const struct amdxdna_dev_info dev_npu1_info = {
-	.reg_bar           = NPU1_REG_BAR_INDEX,
-	.mbox_bar          = NPU1_MBOX_BAR_INDEX,
-	.sram_bar          = NPU1_SRAM_BAR_INDEX,
-	.psp_bar           = NPU1_PSP_BAR_INDEX,
-	.smu_bar           = NPU1_SMU_BAR_INDEX,
-	.first_col         = 1,
-	.dev_mem_buf_shift = 15, /* 32 KiB aligned */
-	.dev_mem_base      = AIE2_DEVM_BASE,
-	.dev_mem_size      = AIE2_DEVM_SIZE,
-	.vbnv              = "NPU Phoenix",
-	.device_type       = AMDXDNA_DEV_TYPE_KMQ,
-	.dev_priv          = &npu1_dev_priv,
-	.ops               = &aie2_ops,
+	.reg_bar                = NPU1_REG_BAR_INDEX,
+	.mbox_bar               = NPU1_MBOX_BAR_INDEX,
+	.sram_bar               = NPU1_SRAM_BAR_INDEX,
+	.psp_bar                = NPU1_PSP_BAR_INDEX,
+	.smu_bar                = NPU1_SMU_BAR_INDEX,
+	.first_col              = 1,
+	.dev_mem_buf_shift      = 15, /* 32 KiB aligned */
+	.dev_mem_max_bank_count = 1,
+	.dev_mem_base           = AIE2_DEVM_BASE,
+	.dev_mem_size           = AIE2_DEVM_SIZE,
+	.vbnv                   = "NPU Phoenix",
+	.device_type            = AMDXDNA_DEV_TYPE_KMQ,
+	.dev_priv               = &npu1_dev_priv,
+	.ops                    = &aie2_ops,
 };
