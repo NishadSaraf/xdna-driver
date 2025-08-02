@@ -66,9 +66,6 @@ skip_sva_bind:
 	filp->driver_priv = client;
 	client->filp = filp;
 
-	// TODO: This needs to done one level up and size has to be 512M for STX and 64M for PHX
-	//drm_mm_init(&abo->mm, abo->mem.dev_addr, abo->mem.size);
-
 	heap = kzalloc(struct_size(heap, gobj, xdna->dev_info->dev_mem_max_bank_count), GFP_KERNEL);
 	if (!heap) {
 		XDNA_ERR(xdna, "Failed to allocate heap bank record");
@@ -78,6 +75,10 @@ skip_sva_bind:
 	heap->max_banks = xdna->dev_info->dev_mem_max_bank_count;
 	for (int i = 0; i < heap->max_banks; i++)
 		heap->gobj[i] = NULL;
+
+	// TODO: Size has to be 512M for STX and 64M for PHX
+	drm_mm_init(&heap->mm, xdna->dev_info->dev_mem_base,
+		    heap->max_banks * xdna->dev_info->dev_mem_size);
 
 	client->heap = heap;
 
@@ -103,11 +104,14 @@ static void amdxdna_drm_close(struct drm_device *ddev, struct drm_file *filp)
 	XDNA_DBG(xdna, "Closing PID %d", client->pid);
 
 	// TODO: Iterate over all allocate banks
+	XDNA_INFO(xdna, "Free all allocated gem objects for heap banks");
 	if (client->heap->valid_banks) {
 		for (int i = 0; i < client->heap->valid_banks; i++)
 			drm_gem_object_put(to_gobj(client->heap->gobj[i]));
 	}
+	XDNA_INFO(xdna, "Done");
 
+	drm_mm_takedown(&client->heap->mm);
 	kfree(client->heap);
 	mutex_destroy(&client->mm_lock);
 	xa_destroy(&client->ctx_xa);

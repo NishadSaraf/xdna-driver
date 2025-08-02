@@ -49,7 +49,6 @@ struct amdxdna_gem_obj {
 	struct amdxdna_mem		mem;
 
 	/* Below members are initialized when needed */
-	struct drm_mm			mm; /* For AMDXDNA_BO_DEV_HEAP */
 	struct drm_mm_node		mm_node; /* For AMDXDNA_BO_DEV / carvedout */
 	u32				assigned_ctx; /* For debug bo */
 	struct dma_buf			*dma_buf;
