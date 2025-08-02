@@ -104,12 +104,10 @@ static void amdxdna_drm_close(struct drm_device *ddev, struct drm_file *filp)
 	XDNA_DBG(xdna, "Closing PID %d", client->pid);
 
 	// TODO: Iterate over all allocate banks
-	XDNA_INFO(xdna, "Free all allocated gem objects for heap banks");
 	if (client->heap->valid_banks) {
 		for (int i = 0; i < client->heap->valid_banks; i++)
 			drm_gem_object_put(to_gobj(client->heap->gobj[i]));
 	}
-	XDNA_INFO(xdna, "Done");
 
 	drm_mm_takedown(&client->heap->mm);
 	kfree(client->heap);
