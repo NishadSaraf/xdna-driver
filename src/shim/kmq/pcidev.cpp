@@ -16,7 +16,7 @@ get_heap_num_pages()
   static unsigned int num = 0;
 
   if (!num)
-    num = xrt_core::config::detail::get_uint_value("Debug.num_heap_pages", 4);
+    num = xrt_core::config::detail::get_uint_value("Debug.num_heap_pages", 8);
   return num;
 }
 

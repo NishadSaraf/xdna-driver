@@ -821,6 +821,7 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 	struct amdxdna_dev_heap *heap = client->heap;
 	struct amdxdna_dev *xdna = to_xdna_dev(dev);
 	struct amdxdna_gem_obj *abo;
+	u32 banks_requested;
 	int ret;
 
 	WARN_ON(!is_power_of_2(xdna->dev_info->dev_mem_size));
@@ -830,8 +831,10 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 		return ERR_PTR(-EINVAL);
 	}
 
+	banks_requested = args->size / xdna->dev_info->dev_mem_size;
+
 	mutex_lock(&client->mm_lock);
-	if (heap->valid_banks >= heap->max_banks) {
+	if (banks_requested > heap->max_banks - heap->valid_banks) {
 		XDNA_ERR(client->xdna, "Cannot allocate more than %d heap banks", heap->max_banks);
 		ret = -ENOMEM;
 		goto mm_unlock;
@@ -845,10 +848,7 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 
 	abo->type = AMDXDNA_BO_DEV_HEAP;
 	abo->client = client;
-	// TODO: Track the valid bank ID and and multiple it by the base
 	abo->mem.dev_addr = client->xdna->dev_info->dev_mem_base;
-	// TODO: This needs to done one level up and size has to be 512M for STX and 64M for PHX
-	//drm_mm_init(&abo->mm, abo->mem.dev_addr, abo->mem.size);
 
 #ifdef AMDXDNA_DEVEL
 	if (iommu_mode == AMDXDNA_IOMMU_NO_PASID) {
