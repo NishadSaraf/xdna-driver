@@ -16,7 +16,7 @@ get_heap_num_pages()
   static unsigned int num = 0;
 
   if (!num)
-    num = xrt_core::config::detail::get_uint_value("Debug.num_heap_pages", 8);
+    num = xrt_core::config::detail::get_uint_value("Debug.num_heap_pages", 1);
   return num;
 }
 
@@ -29,6 +29,7 @@ pdev_kmq::
 on_first_open() const
 {
   auto heap_sz = heap_page_size * get_heap_num_pages();
+  std::cout << "on first page open heap: 0x" << std::hex << heap_sz << "\n";
   // Alloc device memory on first device open.
   m_dev_heap_bo = std::make_unique<buffer>(*this, heap_sz, AMDXDNA_BO_DEV_HEAP);
   shim_debug("Alocated %d heap pages ", get_heap_num_pages());
@@ -83,6 +84,7 @@ create_drm_dev_bo(create_bo_arg *arg) const
   } catch (const xrt_core::system_error& ex) {
     if (ex.get_code() != ENOMEM)
       throw;
+    std::cout << "Trying to add additional heap banks\n";
     // Expanding current heap size and try one more time.
     m_dev_heap_bo->expand(arg->size);
     drv_ioctl(drv_ioctl_cmd::create_bo, arg);

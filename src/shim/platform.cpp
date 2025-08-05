@@ -35,6 +35,8 @@ void *
 platform_drv::
 drv_mmap(void *addr, size_t len, int prot, int flags, off_t offset) const
 {
+  std::cout << "drv_mmap mmap addr: 0x" << std::hex << addr << " size: 0x" << std::hex << len
+	    << " flags: 0x" << std::hex << flags << "\n";
   void* ret = mmap(addr, len, prot, flags, m_dev_fd, offset);
 
   if (ret == MAP_FAILED) {

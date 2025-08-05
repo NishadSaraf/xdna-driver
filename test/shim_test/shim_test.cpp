@@ -417,8 +417,10 @@ TEST_create_free_bo(device::id_type id, std::shared_ptr<device>& sdev, arg_type&
   arg_type bos_size(arg.begin() + 2, arg.end());
   std::vector<std::unique_ptr<bo>> bos;
 
-  for (auto& size : bos_size)
+  for (auto& size : bos_size) {
+    std::cout << "TEST----------->BO size: 0x" << std::hex << size << "\n";
     bos.push_back(std::make_unique<bo>(dev, static_cast<size_t>(size), boflags, ext_boflags));
+  }
 
   for (auto& bo : bos)
     get_and_show_bo_properties(dev, bo->get());
@@ -657,7 +659,8 @@ std::vector<test_case> test_list {
     TEST_POSITIVE, dev_filter_xdna, TEST_create_free_bo, {XCL_BO_FLAGS_EXECBUF, 0, 128}
   },
   test_case{ "create_and_free_dpu_sequence_bo 1 bo", {},
-    TEST_POSITIVE, dev_filter_xdna, TEST_create_free_bo, {XCL_BO_FLAGS_CACHEABLE, 0, 128}
+    TEST_POSITIVE, dev_filter_xdna, TEST_create_free_bo, {XCL_BO_FLAGS_CACHEABLE, 0,
+	    80 * 1024 * 1024, 100 * 1024, 120 * 1024 * 1024}
   },
   test_case{ "create_and_free_dpu_sequence_bo multiple bos", {},
     TEST_POSITIVE, dev_filter_xdna, TEST_create_free_bo,

@@ -194,6 +194,7 @@ mmap_ptr(size_t size, size_t alignment)
   if (alignment > page_size)
     total_sz += alignment;
 
+  std::cout << "mmap allocate size: 0x" << std::hex << total_sz << "\n";
   auto p = mmap(0, total_sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED)
     shim_err(-errno, "mmap_range(len=%ld) failed", size);
@@ -247,8 +248,8 @@ mmap_ptr::
 alloc(const pdev *dev, uint64_t dev_offset, size_t size)
 {
   auto sz = page_size_roundup(size);
-  if (sz > m_size)
-    shim_err(ENOSPC, "mmap_alloc(len=%ld) failed", size);
+//  if (sz > m_size)
+//    shim_err(ENOSPC, "mmap_alloc(len=%ld) failed", size);
 
   auto new_mmap = std::make_unique<mmap_ptr>(dev, m_ptr, dev_offset, sz);
   m_size -= sz;
@@ -273,6 +274,7 @@ drm_bo(const pdev& pdev, size_t size, int type)
     .size = m_size,
     .xdna_addr_align = (align == 1 ? 0 : align),
   };
+  std::cout << "Create BO size: 0x" << std::hex << m_size << " type: 0x" << std::hex << type << "\n";
   if (type == AMDXDNA_BO_DEV)
     m_pdev.create_drm_dev_bo(&arg);
   else
@@ -280,6 +282,7 @@ drm_bo(const pdev& pdev, size_t size, int type)
   m_id = arg.bo;
   m_xdna_addr = arg.xdna_addr;
   m_map_offset = arg.map_offset;
+  std::cout << "Got xdna_addr: 0x" << std::hex << m_xdna_addr << " off: 0x" << m_map_offset << "\n";
 }
 
 drm_bo::
@@ -368,6 +371,7 @@ buffer(const pdev& dev, size_t size, int type, void *uptr)
   if (m_uptr && type != AMDXDNA_BO_SHARE)
     shim_err(EINVAL, "User pointer BO must be AMDXDNA_BO_SHARE type.");
 
+  std::cout << "m_total_size 0x" << std::hex << m_total_size << "\n";
   // Prepare the mmap range for the entire buffer
   m_range_addr = std::make_unique<mmap_ptr>(m_total_size, bo_addr_align(m_type));
 
@@ -400,9 +404,10 @@ expand(size_t size)
   auto cur_sz = m_cur_size;
   auto new_sz = size + m_cur_size;
   shim_debug("Expanding BO from %ld to %ld", cur_sz, new_sz);
+  printf("Expanding BO from 0x%lx to 0x%lx type: %d\n", cur_sz, new_sz, m_type);
 
-  if (new_sz > m_total_size)
-    shim_err(EINVAL, "Can't expand BO beyond total size %ld", m_total_size);
+//  if (new_sz > m_total_size)
+//    shim_err(EINVAL, "Can't expand BO beyond total size 0x%lx", m_total_size);
 
   std::unique_ptr<drm_bo> bo;
   if (m_uptr)

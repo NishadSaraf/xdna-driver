@@ -146,8 +146,9 @@ struct amdxdna_stats {
 struct amdxdna_dev_heap {
 	u32				usage;
 	struct drm_mm			mm;
-	u32				valid_banks;
 	u32				max_banks;
+	size_t				size;
+	u32				count;
 	struct amdxdna_gem_obj		*gobj[] __counted_by(max_banks);
 };
 

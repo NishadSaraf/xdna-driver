@@ -37,7 +37,7 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 	struct amdxdna_client *client = abo->client;
 	struct amdxdna_dev *xdna = client->xdna;
 	struct amdxdna_mem *mem = &abo->mem;
-	struct amdxdna_gem_obj *heap;
+	struct amdxdna_gem_obj *hobj;
 	struct page **pages = NULL;
 	u64 offset;
 	u32 align;
@@ -45,64 +45,34 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 
 	mutex_lock(&client->mm_lock);
 
-	heap = client->heap->gobj[0];
-	if (!heap) {
-		mutex_unlock(&client->mm_lock);
-		return -EINVAL;
+	hobj = client->heap->gobj[0];
+	if (!hobj) {
+		ret = -EINVAL;
+		goto unlock;
 	}
 
-	if (heap->mem.userptr == AMDXDNA_INVALID_ADDR) {
+	if (hobj->mem.userptr == AMDXDNA_INVALID_ADDR) {
 		XDNA_ERR(xdna, "Invalid dev heap userptr");
-		mutex_unlock(&client->mm_lock);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock;
 	}
 
-	// TODO: ADD_HOST_MEM here?
-	if (mem->size == 0 || mem->size > heap->mem.size) {
-		XDNA_ERR(xdna, "Invalid dev bo size 0x%lx, limit 0x%lx",
-			 mem->size, heap->mem.size);
-		mutex_unlock(&client->mm_lock);
-		return -EINVAL;
+	if (mem->size == 0) {
+		XDNA_ERR(xdna, "Invalid dev bo size 0x%lx", mem->size);
+		ret = -EINVAL;
+		goto unlock;
 	}
 
-	align = 1 << max(PAGE_SHIFT, xdna->dev_info->dev_mem_buf_shift); /* 32kb aligned */
-
-#if 0
-	// TODO: Remove the below condition check
-	if (heap->mem.size > SZ_64M) {
-		/* TODO: remove this hack code path once FW is updated */
-		u64 threshold = SZ_64M; /* Determine small or large buffer */
-
-		//XDNA_INFO(xdna, "Large heap allocation hack");
-		if (mem->size > threshold) {
-			XDNA_INFO(xdna, "Large buffer allocate start from bank 1");
-			ret = drm_mm_insert_node_in_range(&client->heap->mm, &abo->mm_node,
-							  mem->size, align, 0,
-							  heap->mem.dev_addr + SZ_64M /* start */,
-							  U64_MAX /* let DRM determine */,
-							  DRM_MM_INSERT_BEST);
-		} else {
-			//XDNA_INFO(xdna, "Small buffer allocate in bank 0");
-			ret = drm_mm_insert_node_in_range(&client->heap->mm, &abo->mm_node,
-							  mem->size, align, 0,
-							  heap->mem.dev_addr /* start */,
-							  heap->mem.dev_addr + SZ_64M - 1 /* end */,
-							  DRM_MM_INSERT_BEST);
-		}
-	} else {
-		ret = drm_mm_insert_node_generic(&client->heap->mm, &abo->mm_node, mem->size,
-						 align, 0, DRM_MM_INSERT_BEST);
-	}
-#endif
+	align = BIT(max(PAGE_SHIFT, xdna->dev_info->dev_mem_buf_shift)); /* 32 KB aligned */
 	ret = drm_mm_insert_node_in_range(&client->heap->mm, &abo->mm_node, mem->size, align, 0,
-					  heap->mem.dev_addr /* start */,
-					  heap->mem.dev_addr + SZ_64M * client->heap->valid_banks /* end */,
+					  hobj->mem.dev_addr /* start */,
+					  hobj->mem.dev_addr + client->heap->size /* end */,
 					  DRM_MM_INSERT_BEST);
-
 	if (ret) {
-		XDNA_ERR(xdna, "Failed to alloc dev bo memory, ret %d", ret);
-		mutex_unlock(&client->mm_lock);
-		return ret;
+		XDNA_ERR(xdna, "Failed to alloc dev bo memory of size 0x%lx, ret %d", mem->size,
+			 ret);
+		ret = -ENOMEM;
+		goto unlock;
 	}
 
 	client->heap->usage += mem->size;
@@ -110,20 +80,24 @@ amdxdna_gem_heap_alloc(struct amdxdna_gem_obj *abo)
 	offset = mem->dev_addr - client->heap->gobj[0]->mem.dev_addr;
 	mem->userptr = client->heap->gobj[0]->mem.userptr + offset;
 
-	if (heap->mem.pages)
-		pages = heap->mem.pages;
+	if (hobj->mem.pages)
+		pages = hobj->mem.pages;
 	else if (client->heap->gobj[0]->base.pages)
-		pages = heap->base.pages;
+		pages = hobj->base.pages;
 
 	if (pages) {
 		mem->pages = &pages[offset >> PAGE_SHIFT];
 		mem->nr_pages = mem->size >> PAGE_SHIFT;
 	}
 
-	drm_gem_object_get(to_gobj(heap));
+	XDNA_INFO(xdna, "Start of heap buffer/dev_addr 0x%llx", mem->dev_addr);
+	XDNA_INFO(xdna, "Allocate device BO at 0x%llx of size 0x%lx", offset, mem->size);
+	XDNA_INFO(xdna, "Heap buffer bank base Userptr: 0x%llx", client->heap->gobj[0]->mem.userptr);
+	drm_gem_object_get(to_gobj(hobj));
 
+unlock:
 	mutex_unlock(&client->mm_lock);
-	return 0;
+	return ret;
 }
 
 static void
@@ -248,6 +222,7 @@ static int amdxdna_hmm_register(struct amdxdna_gem_obj *abo,
 	if (!mapp)
 		return -ENOMEM;
 
+	XDNA_INFO(xdna, "vma start: 0x%lx - 0x%lx", vma->vm_start, vma->vm_end);
 	nr_pages = (PAGE_ALIGN(addr + len) - (addr & PAGE_MASK)) >> PAGE_SHIFT;
 	mapp->range.hmm_pfns = kvcalloc(nr_pages, sizeof(*mapp->range.hmm_pfns),
 					GFP_KERNEL);
@@ -279,6 +254,8 @@ static int amdxdna_hmm_register(struct amdxdna_gem_obj *abo,
 	INIT_WORK(&mapp->hmm_unreg_work, amdxdna_hmm_unreg_work);
 	if (is_import_bo(abo) && vma->vm_file && vma->vm_file->f_mapping)
 		mapping_set_unevictable(vma->vm_file->f_mapping);
+
+	XDNA_INFO(xdna, "HMM mmap: 0x%llx to user-> 0x%llx", abo->mem.dev_addr, abo->mem.userptr);
 
 	down_write(&xdna->notifier_lock);
 	list_add_tail(&mapp->node, &abo->mem.umap_list);
@@ -821,7 +798,6 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 	struct amdxdna_dev_heap *heap = client->heap;
 	struct amdxdna_dev *xdna = to_xdna_dev(dev);
 	struct amdxdna_gem_obj *abo;
-	u32 banks_requested;
 	int ret;
 
 	WARN_ON(!is_power_of_2(xdna->dev_info->dev_mem_size));
@@ -831,24 +807,23 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 		return ERR_PTR(-EINVAL);
 	}
 
-	banks_requested = args->size / xdna->dev_info->dev_mem_size;
-
 	mutex_lock(&client->mm_lock);
-	if (banks_requested > heap->max_banks - heap->valid_banks) {
-		XDNA_ERR(client->xdna, "Cannot allocate more than %d heap banks", heap->max_banks);
+	if (heap->size + args->size > heap->max_banks * xdna->dev_info->dev_mem_size) {
+		XDNA_ERR(client->xdna, "Cannnot allocate more than %d heap banks", heap->max_banks);
 		ret = -ENOMEM;
 		goto mm_unlock;
 	}
 
 	abo = amdxdna_gem_create_share_object(dev, args);
 	if (IS_ERR(abo)) {
+		XDNA_ERR(client->xdna, "Failed to create share object for dev bo");
 		ret = PTR_ERR(abo);
 		goto mm_unlock;
 	}
 
 	abo->type = AMDXDNA_BO_DEV_HEAP;
 	abo->client = client;
-	abo->mem.dev_addr = client->xdna->dev_info->dev_mem_base;
+	abo->mem.dev_addr = client->xdna->dev_info->dev_mem_base + heap->size;
 
 #ifdef AMDXDNA_DEVEL
 	if (iommu_mode == AMDXDNA_IOMMU_NO_PASID) {
@@ -859,9 +834,13 @@ amdxdna_drm_create_dev_heap_bo(struct drm_device *dev,
 		}
 	}
 #endif
-	heap->gobj[heap->valid_banks] = abo;
+	heap->gobj[heap->count++] = abo;
+	XDNA_INFO(xdna, "Heap memory size expanded from 0x%lx to 0x%llx", heap->size,
+		  heap->size + args->size);
+	heap->size += args->size;
 	drm_gem_object_get(to_gobj(abo));
-	heap->valid_banks++;
+
+
 	mutex_unlock(&client->mm_lock);
 
 	return abo;
@@ -1034,6 +1013,8 @@ int amdxdna_gem_pin_nolock(struct amdxdna_gem_obj *abo)
 	struct amdxdna_dev *xdna = to_xdna_dev(to_gobj(abo)->dev);
 	int ret;
 
+	// TODO: Find the appropriate gem object for the heap bank based on the dev_addr
+	// TODO: If the BO spans multiple banks need to iterate over and pin all of them
 	if (abo->type == AMDXDNA_BO_DEV)
 		abo = abo->client->heap->gobj[0];
 

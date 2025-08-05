@@ -574,8 +574,10 @@ int aie2_ctx_init(struct amdxdna_ctx *ctx)
 	ctx->priv->orig_num_col = ctx->num_tiles / ndev->metadata.core.row_count;
 	ctx->max_opc = ndev->priv->col_opc * ctx->priv->orig_num_col;
 	mutex_lock(&client->mm_lock);
-	// TODO: Client device heap object maynot exist and this is a valid for dynamic heap
-	// allocation
+	/*
+	 * To gurantee backwards compatibility the at least one bank of heap has to be allocated and
+	 * mmaped
+	 */
 	heap = client->heap->gobj[0];
 	if (!heap) {
 		XDNA_ERR(xdna, "The client dev heap object not exist");
@@ -583,7 +585,9 @@ int aie2_ctx_init(struct amdxdna_ctx *ctx)
 		ret = -ENOENT;
 		goto free_priv;
 	}
+
 	drm_gem_object_get(to_gobj(heap));
+
 	mutex_unlock(&client->mm_lock);
 	priv->heap = heap;
 	sema_init(&priv->job_sem, CTX_MAX_CMDS);
