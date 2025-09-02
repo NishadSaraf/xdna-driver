@@ -9,6 +9,7 @@
 #include <drm/drm_managed.h>
 #endif
 
+#include "amdxdna_debug.h"
 #include "amdxdna_pci_drv.h"
 #include "amdxdna_sysfs.h"
 #include "amdxdna_pm.h"

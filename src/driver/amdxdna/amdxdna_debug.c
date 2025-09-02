@@ -2,6 +2,7 @@
 /*
  * Copyright (C) 2025, Advanced Micro Devices, Inc.
  */
+#include "amdxdna_debug.h"
 
 void amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
 {

@@ -6,6 +6,9 @@
 #ifndef _AMDXDNA_DEBUG_H_
 #define _AMDXDNA_DEBUG_H_
 
+#include <linux/kernel.h>
+#include <linux/timer.h>
+
 #define AMDXDNA_DEBUG_FOOTER_SIZE	SZ_4K
 
 struct amdxdna_debug_footer {
@@ -25,8 +28,7 @@ struct amdxdna_debug {
 	struct timer_list	poll_timer;
 	u32			msi_idx;
 	u32			msi_address;
-	u64			head;
-	u32			tail ____cacheline_aligned_in_smp;
+	u64			tail;
 	bool			enabled;
 };
 

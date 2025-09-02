@@ -206,12 +206,13 @@ static void aie2_print_log_buffer_data(struct amdxdna_dev_hdl *ndev)
 		log_ptr[header_size + msg_size - 1] = '\0';
 
 		if (header->appn > 15)
-			scnprintf(appid, sizeof(appid), "[MGMNT]");
+			scnprintf(appid, sizeof(appid), "MGMNT");
 		else
-			scnprintf(appid, sizeof(appid), "[APP%2d]", header->appn);
+			scnprintf(appid, sizeof(appid), "APP%2d", header->appn);
 
-		XDNA_INFO(ndev->xdna, "[NPU FW] [%s] %s: %s", log_level_str[header->level],
-			  appid, (char *)(log_ptr + header_size));
+		XDNA_INFO(ndev->xdna, "[NPU FW] [%lld] [%s] [%s]: %s",
+			  header->timestamp, log_level_str[header->level], appid,
+			  (char *)(log_ptr + header_size));
 
 		log_ptr += ALIGN(header_size + msg_size, LOG_MSG_ALIGN);
 	}
