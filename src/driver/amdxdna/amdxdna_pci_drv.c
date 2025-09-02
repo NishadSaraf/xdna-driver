@@ -9,6 +9,7 @@
 #include <drm/drm_managed.h>
 #endif
 
+#include "amdxdna_dpt.h"
 #include "amdxdna_pci_drv.h"
 #include "amdxdna_sysfs.h"
 #include "amdxdna_pm.h"
@@ -127,6 +128,10 @@ static int amdxdna_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto failed_tdr_fini;
 	}
 
+	ret = amdxdna_fw_log_init(xdna);
+	if (ret)
+		XDNA_WARN(xdna, "Failed to enable firmware logging: %d", ret);
+
 	/* Debug fs needs to go after register DRM dev */
 	if (xdna->dev_info->ops->debugfs)
 		xdna->dev_info->ops->debugfs(xdna);
@@ -151,6 +156,7 @@ static void amdxdna_remove(struct pci_dev *pdev)
 	struct amdxdna_dev *xdna = pci_get_drvdata(pdev);
 	struct amdxdna_client *client;
 
+	amdxdna_fw_log_fini(xdna);
 	destroy_workqueue(xdna->notifier_wq);
 	amdxdna_tdr_stop(&xdna->tdr);
 	amdxdna_sysfs_fini(xdna);
