@@ -131,6 +131,10 @@ static int amdxdna_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (xdna->dev_info->ops->debugfs)
 		xdna->dev_info->ops->debugfs(xdna);
 
+	ret = amdxdna_fw_log_init(xdna);
+	if (ret)
+		XDNA_WARN(xdna, "Failed to enable firmware logging: %d", ret);
+
 #ifdef AMDXDNA_DEVEL
 	ida_init(&xdna->pdi_ida);
 #endif
@@ -151,6 +155,7 @@ static void amdxdna_remove(struct pci_dev *pdev)
 	struct amdxdna_dev *xdna = pci_get_drvdata(pdev);
 	struct amdxdna_client *client;
 
+	amdxdna_fw_log_fini(xdna);
 	destroy_workqueue(xdna->notifier_wq);
 	amdxdna_tdr_stop(&xdna->tdr);
 	amdxdna_sysfs_fini(xdna);
