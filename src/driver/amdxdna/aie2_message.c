@@ -200,6 +200,42 @@ int aie2_frame_boundary_preemption(struct amdxdna_dev_hdl *ndev, bool enable)
 	return 0;
 }
 
+int aie2_set_log_level(struct amdxdna_dev_hdl *ndev, enum fw_log_level level)
+{
+	u32 type = NPU4_RT_TYPE_LOG_LEVEL;
+
+	if (!is_supported_rt_cfg(ndev, type)) {
+		XDNA_DBG(ndev->xdna, "Skipped");
+		return 0;
+	}
+
+	return aie2_set_runtime_cfg(ndev, type, level);
+}
+
+int aie2_set_log_format(struct amdxdna_dev_hdl *ndev, enum fw_log_format format)
+{
+	u32 type = NPU4_RT_TYPE_LOG_FORMAT;
+
+	if (!is_supported_rt_cfg(ndev, type)) {
+		XDNA_DBG(ndev->xdna, "Skipped");
+		return 0;
+	}
+
+	return aie2_set_runtime_cfg(ndev, type, format);
+}
+
+int aie2_set_log_destination(struct amdxdna_dev_hdl *ndev, enum fw_log_destination destination)
+{
+	u32 type = NPU4_RT_TYPE_LOG_DESTINATION;
+
+	if (!is_supported_rt_cfg(ndev, type)) {
+		XDNA_DBG(ndev->xdna, "Skipped");
+		return 0;
+	}
+
+	return aie2_set_runtime_cfg(ndev, type, destination);
+}
+
 static int
 aie2_runtime_update_prop(struct amdxdna_dev_hdl *ndev,
 			 struct amdxdna_ctx *ctx, u32 type, u32 value)
@@ -393,6 +429,7 @@ int aie2_query_aie_firmware_version(struct amdxdna_dev_hdl *ndev,
 	return 0;
 }
 
+#if 0
 int aie2_start_event_trace(struct amdxdna_dev_hdl *ndev, dma_addr_t addr,
 			   u32 size, u32 event_category)
 {
@@ -440,25 +477,39 @@ int aie2_set_event_trace_categories(struct amdxdna_dev_hdl *ndev, u32 categories
 
 	return resp.status;
 }
-
-int aie2_configure_dram_logging(struct amdxdna_dev_hdl *ndev, dma_addr_t addr, u32 size)
+#endif
+int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
+		       size_t size, u32 *msi_id, u32 *msi_addr)
 {
-	DECLARE_AIE2_MSG(config_logging_dram_buf, MSG_OP_CONFIG_LOGGING_DRAM_BUF);
+	DECLARE_AIE2_MSG(config_fw_log, MSG_OP_CONFIG_FW_LOG);
+	struct amdxdna_dev *xdna = ndev->xdna;
+	dma_addr_t addr;
 	int ret;
 
-	req.dram_buffer_address = addr;
-	req.dram_buffer_size = size;
+	if (!aie2_is_supported_msg(ndev, MSG_OP_CONFIG_FW_LOG))
+		return -EOPNOTSUPP;
 
-	XDNA_DBG(ndev->xdna, "send configure dram logging msg");
-	ret = aie2_send_mgmt_msg_wait(ndev, &msg);
-	if (ret)
-		return ret;
+	addr = aie2_mgmt_buff_get_dma_addr(mgmt_hdl);
+	if (!addr) {
+		XDNA_ERR(xdna, "Invalid DMA address: %lld", addr);
+		return -EINVAL;
+	}
 
 	/* Send same cmd with size 0, to detach logger from FW */
-	if (!size)
-		return 0;
+	req.buf_size = size;
+	req.buf_addr = addr;
 
-	aie2_configure_log_buf_irq(ndev, &resp);
+	ret = aie2_send_mgmt_msg_wait(ndev, &msg);
+	if (ret) {
+		XDNA_ERR(xdna, "Config fw log failed, ret 0x%x", resp.status);
+		return -EINVAL;
+	}
+
+	if (!size && !msi_id && !msi_addr) {
+		*msi_addr = resp.msi_address;
+		*msi_id = resp.msi_idx;
+	}
+
 	return 0;
 }
 

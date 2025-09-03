@@ -469,8 +469,8 @@ disable_dev:
 static void aie2_hw_suspend(struct amdxdna_dev *xdna)
 {
 	guard(mutex)(&xdna->dev_lock);
-	aie2_event_trace_suspend(xdna->dev_handle);
-	aie2_dram_logging_suspend(xdna->dev_handle);
+	//aie2_event_trace_suspend(xdna->dev_handle);
+	//aie2_dram_logging_suspend(xdna->dev_handle);
 	aie2_rq_stop_all(&xdna->dev_handle->ctx_rq);
 	aie2_hw_stop(xdna);
 }
@@ -489,8 +489,8 @@ static int aie2_hw_resume(struct amdxdna_dev *xdna)
 
 	XDNA_DBG(xdna, "context resuming...");
 	aie2_rq_restart_all(&xdna->dev_handle->ctx_rq);
-	aie2_event_trace_resume(xdna->dev_handle);
-	aie2_dram_logging_resume(xdna->dev_handle);
+	//aie2_event_trace_resume(xdna->dev_handle);
+	//aie2_dram_logging_resume(xdna->dev_handle);
 	return 0;
 }
 
@@ -617,13 +617,13 @@ skip_pasid:
 		goto stop_hw;
 	}
 
-	ret = aie2_event_trace_init(ndev);
-	if (ret)
-		XDNA_DBG(xdna, "Event trace init failed, ret %d", ret);
+	//ret = aie2_event_trace_init(ndev);
+	//if (ret)
+	//	XDNA_DBG(xdna, "Event trace init failed, ret %d", ret);
 
-	ret = aie2_dram_logging_init(ndev);
-	if (ret)
-		XDNA_DBG(xdna, "Dram logging init failed, ret %d", ret);
+	//ret = aie2_dram_logging_init(ndev);
+	//if (ret)
+	//	XDNA_DBG(xdna, "Dram logging init failed, ret %d", ret);
 
 	release_firmware(fw);
 	amdxdna_rpm_init(xdna);
@@ -649,8 +649,8 @@ static void aie2_fini(struct amdxdna_dev *xdna)
 	struct amdxdna_dev_hdl *ndev = xdna->dev_handle;
 
 	amdxdna_rpm_fini(xdna);
-	aie2_event_trace_fini(ndev);
-	aie2_dram_logging_fini(ndev);
+	//aie2_event_trace_fini(ndev);
+	//aie2_dram_logging_fini(ndev);
 	aie2_rq_fini(&ndev->ctx_rq);
 	aie2_hw_stop(xdna);
 #ifdef AMDXDNA_DEVEL
@@ -1606,6 +1606,57 @@ void aie2_mgmt_buff_free(struct aie2_mgmt_dma_hdl *mgmt_hdl)
 			     mgmt_hdl->dma_hdl, mgmt_hdl->dir);
 }
 
+int aie2_fw_log_init(struct amdxdna_dev *xdna, size_t size, u8 level)
+{
+	struct aie2_mgmt_dma_hdl *mgmt_hdl = &xdna->dev_handle->fw_log_mgmt_hdl;
+	u32 msi_id, msi_addr;
+	void *buff;
+	int ret;
+
+	if (size < SZ_8K) {
+		XDNA_ERR(xdna, "Invalid fw log buffer size: 0x%lx", size);
+		return -EINVAL;
+	}
+
+	buff = aie2_mgmt_buff_alloc(xdna->dev_handle, mgmt_hdl, size, DMA_FROM_DEVICE);
+	if (!buff) {
+		XDNA_ERR(xdna, "Failed to allocate fw log buffer of size: 0x%lx", size);
+		return -ENOMEM;
+	}
+
+	aie2_mgmt_buff_clflush(mgmt_hdl);
+
+	mutex_lock(&xdna->dev_handle->aie2_lock);
+	ret = aie2_config_fw_log(xdna->dev_handle, mgmt_hdl, size, &msi_id, &msi_addr);
+	if (ret) {
+		XDNA_ERR(xdna, "Failed to init fw log buffer: %d", ret);
+		goto exit;
+	}
+
+	ret = aie2_set_log_level(xdna->dev_handle, level);
+	if (ret) {
+		XDNA_ERR(xdna, "Failed to init fw log level: %d", ret);
+		goto exit;
+	}
+
+	ret = aie2_set_log_format(xdna->dev_handle, FW_LOG_FORMAT_FULL);
+	if (ret) {
+		XDNA_ERR(xdna, "Failed to init fw log format: %d", ret);
+		goto exit;
+	}
+
+	ret = aie2_set_log_destination(xdna->dev_handle, FW_LOG_DESTINATION_DRAM);
+	if (ret) {
+		XDNA_ERR(xdna, "Failed to init fw log destination: %d", ret);
+		goto exit;
+	}
+
+exit:
+	mutex_unlock(&xdna->dev_handle->aie2_lock);
+	aie2_mgmt_buff_free(mgmt_hdl);
+	return ret;
+}
+
 const struct amdxdna_dev_ops aie2_ops = {
 	.mmap			= NULL,
 	.init			= aie2_init,
@@ -1614,6 +1665,8 @@ const struct amdxdna_dev_ops aie2_ops = {
 	.recover		= aie2_recover,
 	.resume			= aie2_hw_resume,
 	.suspend		= aie2_hw_suspend,
+	.debugfs		= aie2_debugfs_init,
+	.fw_log_init		= aie2_fw_log_init,
 	.get_aie_info		= aie2_get_info,
 	.get_aie_array		= aie2_get_array,
 	.set_aie_state		= aie2_set_state,
@@ -1623,6 +1676,5 @@ const struct amdxdna_dev_ops aie2_ops = {
 	.cmd_submit		= aie2_cmd_submit,
 	.cmd_wait		= aie2_cmd_wait,
 	.hmm_invalidate		= aie2_hmm_invalidate,
-	.debugfs		= aie2_debugfs_init,
 	.cmd_get_out_fence	= aie2_cmd_get_out_fence,
 };

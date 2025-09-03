@@ -36,8 +36,6 @@ amdxdna-$(OFT_CONFIG_AMDXDNA_PCI) += \
 	aie2_error.o \
 	aie2_debugfs.o \
 	aie2_message.o \
-	aie2_logging.o \
-	aie2_event_trace.o \
 	aie2_ctx_runqueue.o \
 	aie2_pm.o \
 	aie2_pci.o \
@@ -47,6 +45,8 @@ amdxdna-$(OFT_CONFIG_AMDXDNA_PCI) += \
 	npu5_regs.o \
 	npu6_regs.o \
 	amdxdna_pci_drv.o
+#	aie2_event_trace.o \
+#	aie2_logging.o \
 
 amdxdna-$(OFT_CONFIG_AMDXDNA_OF) += \
 	amdxdna_gem_of.o \

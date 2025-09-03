@@ -220,6 +220,7 @@ static int aie2_dpm_level_get(struct seq_file *m, void *unused)
 
 AIE2_DBGFS_FOPS(dpm_level, aie2_dpm_level_get, aie2_dpm_level_set);
 
+#if 0
 static const char *aie2_event_trace_input_info(void)
 {
 	return	"echo enable=1 size=1K category=0xFFFFFF -> Follow given input format to enable\n"
@@ -471,7 +472,9 @@ static int aie2_dram_log_cfg_show(struct seq_file *m, void *unused)
 }
 
 AIE2_DBGFS_FOPS(dram_log_cfg, aie2_dram_log_cfg_show, aie2_dram_log_cfg_write);
+#endif
 
+#if 0
 static ssize_t aie2_event_trace_cfg_write(struct file *file, const char __user *buf,
 					  size_t len, loff_t *off)
 {
@@ -542,6 +545,7 @@ static int aie2_event_trace_cfg_show(struct seq_file *m, void *unused)
 }
 
 AIE2_DBGFS_FOPS(event_trace_cfg, aie2_event_trace_cfg_show, aie2_event_trace_cfg_write);
+#endif
 
 static int test_case01(struct amdxdna_dev_hdl *ndev)
 {
@@ -898,12 +902,12 @@ const struct {
 	AIE2_DBGFS_FILE(telemetry_error_info, 0400),
 	AIE2_DBGFS_FILE(telemetry_profiling, 0400),
 	AIE2_DBGFS_FILE(telemetry_debug, 0400),
-	AIE2_DBGFS_FILE(event_trace, 0600),
-	AIE2_DBGFS_FILE(event_trace_cfg, 0600),
+//	AIE2_DBGFS_FILE(event_trace, 0600),
+//	AIE2_DBGFS_FILE(event_trace_cfg, 0600),
 	AIE2_DBGFS_FILE(ctx_rq, 0400),
 	AIE2_DBGFS_FILE(get_app_health, 0400),
-	AIE2_DBGFS_FILE(dram_logging, 0600),
-	AIE2_DBGFS_FILE(dram_log_cfg, 0600),
+//	AIE2_DBGFS_FILE(dram_logging, 0600),
+//	AIE2_DBGFS_FILE(dram_log_cfg, 0600),
 };
 
 void aie2_debugfs_init(struct amdxdna_dev *xdna)

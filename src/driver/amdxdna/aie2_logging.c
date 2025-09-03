@@ -388,12 +388,12 @@ static int aie2_configure_and_start_logging(struct amdxdna_dev_hdl *ndev)
 	}
 
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&ndev->aie2_lock));
-	ret = aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address,
-					  req_buf->dram_buffer_size);
-	if (ret) {
-		XDNA_ERR(xdna, "Failed to configure FW logging");
-		goto free_log_buf;
-	}
+	//ret = aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address,
+	//				  req_buf->dram_buffer_size);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "Failed to configure FW logging");
+	//	goto free_log_buf;
+	//}
 
 	ret = aie2_apply_default_runtime_cfg(ndev);
 	if (ret)
@@ -406,7 +406,7 @@ static int aie2_configure_and_start_logging(struct amdxdna_dev_hdl *ndev)
 
 detach_logger:
 	aie2_remove_log_buf_irq(ndev);
-	(void)aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address, 0);
+	//(void)aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address, 0);
 free_log_buf:
 	aie2_free_log_buf(ndev);
 
@@ -429,9 +429,9 @@ static int aie2_stop_and_remove_logging_config(struct amdxdna_dev_hdl *ndev)
 
 	timer_delete_sync(&req_buf->poll_timer);
 	aie2_remove_log_buf_irq(ndev);
-	ret = aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address, 0);
-	if (ret)
-		XDNA_ERR(xdna, "Failed to detach logger, ret %d", ret);
+	//ret = aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address, 0);
+	//if (ret)
+	//	XDNA_ERR(xdna, "Failed to detach logger, ret %d", ret);
 	aie2_free_log_buf(ndev);
 
 	return ret;
@@ -539,7 +539,7 @@ int aie2_set_log_level(struct amdxdna_dev_hdl *ndev, u32 loglevel)
 	return 0;
 
 out:
-	(void)aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address, 0);
+//	(void)aie2_configure_dram_logging(ndev, req_buf->dram_buffer_address, 0);
 	mutex_unlock(&ndev->aie2_lock);
 	aie2_free_log_buf(ndev);
 	return ret;
