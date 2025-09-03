@@ -479,7 +479,7 @@ int aie2_set_event_trace_categories(struct amdxdna_dev_hdl *ndev, u32 categories
 }
 #endif
 int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
-		       size_t size, u32 *msi_id, u32 *msi_addr)
+		       size_t size, u32 *msi_idx, u32 *msi_address)
 {
 	DECLARE_AIE2_MSG(config_fw_log, MSG_OP_CONFIG_FW_LOG);
 	struct amdxdna_dev *xdna = ndev->xdna;
@@ -495,7 +495,7 @@ int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *m
 		return -EINVAL;
 	}
 
-	/* Send same cmd with size 0, to detach logger from FW */
+	/* Cmd with buffer size 0 detaches log buffer from FW */
 	req.buf_size = size;
 	req.buf_addr = addr;
 
@@ -505,9 +505,9 @@ int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *m
 		return -EINVAL;
 	}
 
-	if (!size && !msi_id && !msi_addr) {
-		*msi_addr = resp.msi_address;
-		*msi_id = resp.msi_idx;
+	if (size && msi_idx && msi_address) {
+		*msi_address = resp.msi_address;
+		*msi_idx = resp.msi_idx;
 	}
 
 	return 0;

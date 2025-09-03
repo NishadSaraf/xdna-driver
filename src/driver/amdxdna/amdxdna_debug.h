@@ -23,9 +23,9 @@ struct amdxdna_debug_footer {
 
 struct amdxdna_debug {
 	struct amdxdna_dev	*xdna;
-	struct workqueue_struct	*wq;
-	struct work_struct	work;
-	struct timer_list	poll_timer;
+//	struct workqueue_struct	*wq;
+//	struct work_struct	work;
+//	struct timer_list	poll_timer;
 	u32			msi_idx;
 	u32			msi_address;
 	u64			tail;
