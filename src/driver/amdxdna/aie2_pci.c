@@ -1661,7 +1661,7 @@ int aie2_fw_log_init(struct amdxdna_dev *xdna, size_t size, u8 level)
 	mutex_unlock(&xdna->dev_handle->aie2_lock);
 
 	xdna->fw_log.io_base = xdna->dev_handle->mbox_base;
-	xdna->fw_log.msi_address = msi_address;
+	xdna->fw_log.msi_address = msi_address & DEBUG_MSI_ADDR_MASK;
 	xdna->fw_log.msi_idx = msi_idx;
 
 	return ret;
@@ -1670,7 +1670,7 @@ free:
 	return ret;
 }
 
-void aie2_fw_log_fini(struct amdxdna_dev *xdna)
+int aie2_fw_log_fini(struct amdxdna_dev *xdna)
 {
 	struct aie2_mgmt_dma_hdl *mgmt_hdl = &xdna->dev_handle->fw_log_mgmt_hdl;
 	int ret;
@@ -1680,14 +1680,14 @@ void aie2_fw_log_fini(struct amdxdna_dev *xdna)
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to reset fw log destination: %d", ret);
 		mutex_unlock(&xdna->dev_handle->aie2_lock);
-		return;
+		return ret;
 	}
 
 	ret = aie2_config_fw_log(xdna->dev_handle, mgmt_hdl, 0, NULL, NULL);
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to reset fw log buffer: %d", ret);
 		mutex_unlock(&xdna->dev_handle->aie2_lock);
-		return;
+		return ret;
 	}
 	mutex_unlock(&xdna->dev_handle->aie2_lock);
 
@@ -1695,6 +1695,7 @@ void aie2_fw_log_fini(struct amdxdna_dev *xdna)
 	xdna->fw_log.msi_idx = 0;
 
 	aie2_mgmt_buff_free(mgmt_hdl);
+	return 0;
 }
 
 const struct amdxdna_dev_ops aie2_ops = {

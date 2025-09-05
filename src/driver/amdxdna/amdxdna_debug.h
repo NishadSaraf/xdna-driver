@@ -36,8 +36,8 @@ struct amdxdna_debug {
 };
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna);
-void amdxdna_fw_log_fini(struct amdxdna_dev *xdna);
-void amdxdna_fw_log_resume(struct amdxdna_dev *xdna);
-void amdxdna_fw_log_suspend(struct amdxdna_dev *xdna);
+int amdxdna_fw_log_fini(struct amdxdna_dev *xdna);
+int amdxdna_fw_log_resume(struct amdxdna_dev *xdna);
+int amdxdna_fw_log_suspend(struct amdxdna_dev *xdna);
 
 #endif /* _AMDXDNA_DEBUG_H_ */

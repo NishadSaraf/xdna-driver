@@ -58,17 +58,18 @@ static int amdxdna_debug_irq_init(struct amdxdna_debug *debug_hdl)
 
 static void amdxdna_debug_irq_fini(struct amdxdna_debug *debug_hdl)
 {
-	free_irq(debug_hdl->irq, debug_hdl);
+	if (debug_hdl->irq)
+		free_irq(debug_hdl->irq, debug_hdl);
 }
 
-void amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
+int amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
 {
-
+	return  amdxdna_fw_log_init(xdna);
 }
 
-void amdxdna_fw_log_suspend(struct amdxdna_dev *xdna)
+int amdxdna_fw_log_suspend(struct amdxdna_dev *xdna)
 {
-
+	return amdxdna_fw_log_fini(xdna);
 }
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
@@ -90,21 +91,34 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	strncpy(fw_log_hdl->name, FW_LOG_NAME, sizeof(fw_log_hdl->name));
 	fw_log_hdl->xdna = xdna;
 
-	// Init ISR and setup timers and worker threads
 	ret = amdxdna_debug_irq_init(fw_log_hdl);
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to configure fw logging: %d", ret);
 		goto exit;
 	}
 
+	fw_log_hdl->enabled = true;
 exit:
 	return ret;
 }
 
-void amdxdna_fw_log_fini(struct amdxdna_dev *xdna)
+int amdxdna_fw_log_fini(struct amdxdna_dev *xdna)
 {
-	amdxdna_debug_irq_fini(&xdna->fw_log);
-	if (xdna->dev_info->ops->fw_log_fini)
-		xdna->dev_info->ops->fw_log_fini(xdna);
+	struct amdxdna_debug *fw_log_hdl = &xdna->fw_log;
+	int ret;
 
+	if (!fw_log_hdl->enabled)
+		return 0;
+
+	amdxdna_debug_irq_fini(&xdna->fw_log);
+	if (xdna->dev_info->ops->fw_log_fini) {
+		ret = xdna->dev_info->ops->fw_log_fini(xdna);
+		if (ret) {
+			XDNA_ERR(xdna, "Failed to disable fw logging: %d", ret);
+			return ret;
+		}
+	}
+
+	fw_log_hdl->enabled = false;
+	return 0;
 }

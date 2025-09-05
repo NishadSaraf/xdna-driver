@@ -76,6 +76,8 @@
 #define ctx_rq_to_xdna_dev(r) \
 	(ctx_rq_to_ndev(r)->xdna)
 
+#define DEBUG_MSI_ADDR_MASK	GENMASK(23, 0)
+
 struct amdxdna_ctx_priv;
 struct event_trace_req_buf;
 struct start_event_trace_resp;
@@ -435,7 +437,7 @@ dma_addr_t aie2_mgmt_buff_get_dma_addr(struct aie2_mgmt_dma_hdl *mgmt_hdl);
 void *aie2_mgmt_buff_get_cpu_addr(struct aie2_mgmt_dma_hdl *mgmt_hdl);
 void aie2_mgmt_buff_free(struct aie2_mgmt_dma_hdl *mgmt_hdl);
 int aie2_fw_log_init(struct amdxdna_dev *xdna, size_t size, u8 level);
-void aie2_fw_log_fini(struct amdxdna_dev *xdna);
+int aie2_fw_log_fini(struct amdxdna_dev *xdna);
 
 /* aie2_smu.c */
 int aie2_smu_start(struct amdxdna_dev_hdl *ndev);
