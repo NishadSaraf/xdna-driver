@@ -1670,9 +1670,6 @@ int aie2_fw_log_fini(struct amdxdna_dev *xdna)
 		return ret;
 	}
 	mutex_unlock(&xdna->dev_handle->aie2_lock);
-
-	xdna->fw_log->msi_address = 0;
-	xdna->fw_log->msi_idx = 0;
 	return 0;
 }
 

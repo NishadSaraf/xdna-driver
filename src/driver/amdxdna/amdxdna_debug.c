@@ -93,6 +93,9 @@ static void amdxdna_debug_irq_fini(struct amdxdna_debug *debug_hdl)
 {
 	if (debug_hdl->irq)
 		free_irq(debug_hdl->irq, debug_hdl);
+
+	debug_hdl->msi_address = 0;
+	debug_hdl->msi_idx = 0;
 }
 
 int amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
@@ -151,7 +154,7 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 
 	ret = amdxdna_debug_irq_init(log_hdl);
 	if (ret) {
-		XDNA_ERR(xdna, "Failed to configure fw logging: %d", ret);
+		XDNA_ERR(xdna, "Failed to init fw logging IRQ: %d", ret);
 		goto exit;
 	}
 
