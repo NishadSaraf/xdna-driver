@@ -22,14 +22,17 @@ struct amdxdna_debug_footer {
 };
 
 struct amdxdna_debug {
+	bool			enabled;
+	char			name[20];
 	struct amdxdna_dev	*xdna;
-//	struct workqueue_struct	*wq;
-//	struct work_struct	work;
-//	struct timer_list	poll_timer;
+	void		__iomem *io_base;
+	int			irq;
 	u32			msi_idx;
 	u32			msi_address;
 	u64			tail;
-	bool			enabled;
+//	struct workqueue_struct	*wq;
+//	struct work_struct	work;
+//	struct timer_list	poll_timer;
 };
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna);
