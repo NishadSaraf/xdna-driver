@@ -26,8 +26,9 @@ MODULE_PARM_DESC(fw_log_level,
 static irqreturn_t debug_irq_handler(int irq, void *data)
 {
 	struct amdxdna_debug *debug_hdl = (struct amdxdna_debug *)data;
+//	struct amdxdna_debug_footer *foot;
 
-	XDNA_INFO(debug_hdl->xdna, "Received %s IRQ", debug_hdl->name);
+//	XDNA_INFO(debug_hdl->xdna, "Received %s IRQ", debug_hdl->name);
 
 	/* Clear the interrupt */
 	writel(0, debug_hdl->io_base + debug_hdl->msi_address);
