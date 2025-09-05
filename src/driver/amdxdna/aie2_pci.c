@@ -552,9 +552,6 @@ static int aie2_init(struct amdxdna_dev *xdna)
 	ndev->sram_base = tbl[xdna->dev_info->sram_bar];
 	ndev->smu_base = tbl[xdna->dev_info->smu_bar];
 	ndev->mbox_base = tbl[xdna->dev_info->mbox_bar];
-	XDNA_INFO(xdna, "sram 0x%p", ndev->sram_base);
-	XDNA_INFO(xdna, "smu 0x%p", ndev->smu_base);
-	XDNA_INFO(xdna, "mbox 0x%p", ndev->mbox_base);
 
 	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
 	if (ret) {
@@ -569,7 +566,6 @@ static int aie2_init(struct amdxdna_dev *xdna)
 		goto release_fw;
 	}
 
-	XDNA_INFO(xdna, "Number of IRQ vectors: %d", nvec);
 	ret = pci_alloc_irq_vectors(pdev, nvec, nvec, PCI_IRQ_MSIX);
 	if (ret < 0) {
 		XDNA_ERR(xdna, "failed to alloc irq vectors, ret %d", ret);

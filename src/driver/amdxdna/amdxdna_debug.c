@@ -26,21 +26,46 @@ MODULE_PARM_DESC(fw_log_level,
 static irqreturn_t debug_irq_handler(int irq, void *data)
 {
 	struct amdxdna_debug *debug_hdl = (struct amdxdna_debug *)data;
-	u32 offset = debug_hdl->dma_hdl->size - AMDXDNA_DEBUG_FOOTER_SIZE;
 	struct amdxdna_debug_footer *footer;
+	u32 offset;
+	u64 tail;
 
 	/* Clear the interrupt */
 	writel(0, debug_hdl->io_base + debug_hdl->msi_address);
 
-	amdxdna_mgmt_buff_clflush(debug_hdl->dma_hdl, offset, sizeof(*footer));
-	//drm_clflush_virt_range(footer, sizeof(*footer));
-
+	offset = debug_hdl->dma_hdl->size - AMDXDNA_DEBUG_FOOTER_SIZE;
 	footer = debug_hdl->dma_hdl->vaddr + offset;
-	XDNA_INFO(debug_hdl->xdna, "Received %s IRQ", debug_hdl->name);
-	XDNA_INFO(debug_hdl->xdna, "\tVersion: %d.%d", footer->major, footer->minor);
-	XDNA_INFO(debug_hdl->xdna, "\tTail: 0x%x", footer->tail);
+
+	amdxdna_mgmt_buff_clflush(debug_hdl->dma_hdl, offset, sizeof(*footer));
+
+	/* Extend 32-bit firmware pointer to a 64-bit value */
+	tail = (debug_hdl->tail & ~GENMASK_ULL(31, 0)) | footer->tail;
+	if (tail < debug_hdl->tail)
+		tail += BIT_ULL(32);
+
+	WRITE_ONCE(debug_hdl->tail, tail);
 
 	return IRQ_HANDLED;
+}
+
+static void amdxdna_debug_read_metadata(struct amdxdna_debug *debug_hdl)
+{
+	struct amdxdna_debug_footer *footer;
+	u32 offset;
+
+	offset = debug_hdl->dma_hdl->size - AMDXDNA_DEBUG_FOOTER_SIZE;
+	footer = debug_hdl->dma_hdl->vaddr + offset;
+
+	amdxdna_mgmt_buff_clflush(debug_hdl->dma_hdl, offset, sizeof(*footer));
+
+	debug_hdl->payload_version = footer->payload_version;
+	debug_hdl->minor = footer->minor;
+	debug_hdl->major = footer->major;
+
+	XDNA_INFO(debug_hdl->xdna, "%s: version: %d.%d",
+		  debug_hdl->name, debug_hdl->major, debug_hdl->minor);
+	XDNA_INFO(debug_hdl->xdna, "%s: payload version: %d",
+		  debug_hdl->name, debug_hdl->payload_version);
 }
 
 static int amdxdna_debug_irq_init(struct amdxdna_debug *debug_hdl)
@@ -115,6 +140,7 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	strncpy(log_hdl->name, FW_LOG_NAME, sizeof(log_hdl->name));
 	log_hdl->dma_hdl = dma_hdl;
 	log_hdl->xdna = xdna;
+	log_hdl->tail = 0;
 	xdna->fw_log = log_hdl;
 
 	ret = xdna->dev_info->ops->fw_log_init(xdna, fw_log_size, fw_log_level);
@@ -128,6 +154,8 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 		XDNA_ERR(xdna, "Failed to configure fw logging: %d", ret);
 		goto exit;
 	}
+
+	amdxdna_debug_read_metadata(log_hdl);
 
 	log_hdl->enabled = true;
 	return 0;

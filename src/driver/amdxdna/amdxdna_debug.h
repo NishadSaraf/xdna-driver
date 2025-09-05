@@ -14,14 +14,14 @@
 #define AMDXDNA_DEBUG_FOOTER_SIZE	SZ_4K
 
 struct amdxdna_debug_footer {
-	u8			minor;
-	u8			major;
-	u8			type;
-	u8			reserved1;
-	u32			payload_version;
-	u8			reserved2[56];
-	u32			tail;
-};
+	u8				minor;
+	u8				major;
+	u8				type;
+	u8				reserved1;
+	u32				payload_version;
+	u8				reserved2[56];
+	u32				tail;
+} __packed;
 
 struct amdxdna_debug {
 	bool				enabled;
@@ -32,6 +32,9 @@ struct amdxdna_debug {
 	int				irq;
 	u32				msi_idx;
 	u32				msi_address;
+	u8				minor;
+	u8				major;
+	u32				payload_version;
 	u64				tail;
 //	struct workqueue_struct	*wq;
 //	struct work_struct	work;
