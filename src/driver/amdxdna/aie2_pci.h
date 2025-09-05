@@ -534,7 +534,7 @@ int aie2_register_pdis(struct amdxdna_ctx *ctx);
 int aie2_unregister_pdis(struct amdxdna_ctx *ctx);
 int aie2_legacy_config_cu(struct amdxdna_ctx *ctx);
 #endif
-int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
+int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct amdxdna_mgmt_dma_hdl *dma_hdl,
 		       size_t size, u32 *msi_id, u32 *msi_addr);
 
 int aie2_config_cu(struct amdxdna_ctx *ctx);

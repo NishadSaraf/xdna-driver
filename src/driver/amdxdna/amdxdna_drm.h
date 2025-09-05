@@ -48,6 +48,7 @@ struct amdxdna_dev;
 struct amdxdna_client;
 struct amdxdna_dev_hdl;
 struct amdxdna_dev_priv;
+struct amdxdna_mgmt_dma_hdl;
 
 /*
  * struct amdxdna_dev_ops - Device hardware operation callbacks
@@ -129,7 +130,7 @@ struct amdxdna_dev {
 	struct list_head		client_list;
 	struct amdxdna_fw_ver		fw_ver;
 	struct amdxdna_tdr		tdr;
-	struct amdxdna_debug		fw_log;
+	struct amdxdna_debug		*fw_log;
 #ifdef AMDXDNA_DEVEL
 	struct ida			pdi_ida;
 #endif

@@ -478,7 +478,7 @@ int aie2_set_event_trace_categories(struct amdxdna_dev_hdl *ndev, u32 categories
 	return resp.status;
 }
 #endif
-int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
+int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct amdxdna_mgmt_dma_hdl *dma_hdl,
 		       size_t size, u32 *msi_idx, u32 *msi_address)
 {
 	DECLARE_AIE2_MSG(config_fw_log, MSG_OP_CONFIG_FW_LOG);
@@ -489,7 +489,7 @@ int aie2_config_fw_log(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *m
 	if (!aie2_is_supported_msg(ndev, MSG_OP_CONFIG_FW_LOG))
 		return -EOPNOTSUPP;
 
-	addr = aie2_mgmt_buff_get_dma_addr(mgmt_hdl);
+	addr = amdxdna_mgmt_buff_get_dma_addr(dma_hdl);
 	if (!addr) {
 		XDNA_ERR(xdna, "Invalid DMA address: %lld", addr);
 		return -EINVAL;

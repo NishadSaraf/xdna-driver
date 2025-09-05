@@ -9,6 +9,8 @@
 #include <linux/kernel.h>
 #include <linux/timer.h>
 
+#include "amdxdna_mgmt.h"
+
 #define AMDXDNA_DEBUG_FOOTER_SIZE	SZ_4K
 
 struct amdxdna_debug_footer {
@@ -22,14 +24,15 @@ struct amdxdna_debug_footer {
 };
 
 struct amdxdna_debug {
-	bool			enabled;
-	char			name[20];
-	struct amdxdna_dev	*xdna;
-	void		__iomem *io_base;
-	int			irq;
-	u32			msi_idx;
-	u32			msi_address;
-	u64			tail;
+	bool				enabled;
+	char				name[20];
+	struct amdxdna_dev		*xdna;
+	struct amdxdna_mgmt_dma_hdl	*dma_hdl;
+	void			__iomem *io_base;
+	int				irq;
+	u32				msi_idx;
+	u32				msi_address;
+	u64				tail;
 //	struct workqueue_struct	*wq;
 //	struct work_struct	work;
 //	struct timer_list	poll_timer;
