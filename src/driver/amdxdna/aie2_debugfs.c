@@ -885,6 +885,35 @@ free_buf:
 
 AIE2_DBGFS_FOPS(get_app_health, aie2_get_app_health_show, NULL);
 
+static u64 fw_log_tail;
+
+static int aie2_fw_log_show(struct seq_file *m, void *unused)
+{
+	struct amdxdna_dev_hdl *ndev = m->private;
+	struct amdxdna_dev *xdna = ndev->xdna;
+	struct amdxdna_debug *log;
+	u64 tmp;
+	int ret;
+
+	log = xdna->fw_log;
+
+	ret = wait_event_interruptible(log->wait, fw_log_tail != READ_ONCE(log->tail));
+	if (ret) {
+		XDNA_WARN(xdna, "Wait interrupted by user: %d\n", ret);
+		return 0;
+	}
+
+	tmp = log->tail;
+
+	seq_printf(m, "Tail pointer: 0x%llx\n", tmp);
+
+	fw_log_tail = tmp;
+
+	return 0;
+}
+
+AIE2_DBGFS_FOPS(fw_log, aie2_fw_log_show, NULL);
+
 const struct {
 	const char *name;
 	const struct file_operations *fops;
@@ -906,6 +935,7 @@ const struct {
 //	AIE2_DBGFS_FILE(event_trace_cfg, 0600),
 	AIE2_DBGFS_FILE(ctx_rq, 0400),
 	AIE2_DBGFS_FILE(get_app_health, 0400),
+	AIE2_DBGFS_FILE(fw_log, 0400),
 //	AIE2_DBGFS_FILE(dram_logging, 0600),
 //	AIE2_DBGFS_FILE(dram_log_cfg, 0600),
 };

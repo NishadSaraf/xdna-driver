@@ -30,6 +30,7 @@ struct amdxdna_debug {
 	char				name[20];
 	struct amdxdna_dev		*xdna;
 	struct amdxdna_mgmt_dma_hdl	*dma_hdl;
+	struct wait_queue_head		wait;
 	void			__iomem *io_base;
 	int				irq;
 	u32				msi_idx;

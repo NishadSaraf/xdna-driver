@@ -43,6 +43,8 @@ static irqreturn_t debug_irq_handler(int irq, void *data)
 
 	WRITE_ONCE(debug_hdl->tail, tail);
 
+	wake_up(&debug_hdl->wait);
+
 	return IRQ_HANDLED;
 }
 
@@ -137,6 +139,7 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	log_hdl->dma_hdl = dma_hdl;
 	log_hdl->xdna = xdna;
 	log_hdl->tail = 0;
+	init_waitqueue_head(&log_hdl->wait);
 	xdna->fw_log = log_hdl;
 
 	ret = xdna->dev_info->ops->fw_log_init(xdna, fw_log_size, fw_log_level);

@@ -333,7 +333,6 @@ struct amdxdna_dev_hdl {
 	u32				total_col;
 	struct aie_version		version;
 	struct aie_metadata		metadata;
-	struct aie2_mgmt_dma_hdl	fw_log_mgmt_hdl;
 
 	/*power management and clock */
 	int				pw_mode;

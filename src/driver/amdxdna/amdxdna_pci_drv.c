@@ -128,13 +128,13 @@ static int amdxdna_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto failed_tdr_fini;
 	}
 
-	/* Debug fs needs to go after register DRM dev */
-	if (xdna->dev_info->ops->debugfs)
-		xdna->dev_info->ops->debugfs(xdna);
-
 	ret = amdxdna_fw_log_init(xdna);
 	if (ret)
 		XDNA_WARN(xdna, "Failed to enable firmware logging: %d", ret);
+
+	/* Debug fs needs to go after register DRM dev */
+	if (xdna->dev_info->ops->debugfs)
+		xdna->dev_info->ops->debugfs(xdna);
 
 #ifdef AMDXDNA_DEVEL
 	ida_init(&xdna->pdi_ida);
