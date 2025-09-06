@@ -12,6 +12,8 @@
 #include "amdxdna_mgmt.h"
 
 #define AMDXDNA_DEBUG_FOOTER_SIZE	SZ_4K
+#define AMDXDNA_DEBUG_FW_LOG_NAME	"xdna_fw_log"
+
 
 struct amdxdna_debug_footer {
 	u8				minor;

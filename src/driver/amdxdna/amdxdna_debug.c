@@ -21,8 +21,6 @@ module_param(fw_log_level, byte, 0444);
 MODULE_PARM_DESC(fw_log_level,
 		 " Firmware log verbosity: 0: NONE 1: ERROR (Default) 2: WARN 3: INFO 4: DEBUG");
 
-#define FW_LOG_NAME		"xdna_fw_log"
-
 static irqreturn_t debug_irq_handler(int irq, void *data)
 {
 	struct amdxdna_debug *debug_hdl = (struct amdxdna_debug *)data;
@@ -112,7 +110,6 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 {
 	struct amdxdna_mgmt_dma_hdl *dma_hdl;
 	struct amdxdna_debug *log_hdl;
-	void *vaddr;
 	int ret;
 
 	if (!xdna->dev_info->ops->fw_log_init)
@@ -127,20 +124,16 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	if (!log_hdl)
 		return -ENOMEM;
 
-	dma_hdl = kzalloc(sizeof(*dma_hdl), GFP_KERNEL);
-	if (!dma_hdl)
-		return -ENOMEM;
-
-	vaddr = amdxdna_mgmt_buff_alloc(xdna, dma_hdl, fw_log_size, DMA_FROM_DEVICE);
-	if (!vaddr) {
+	dma_hdl = amdxdna_mgmt_buff_alloc(xdna, fw_log_size, DMA_FROM_DEVICE);
+	if (IS_ERR(dma_hdl)) {
 		XDNA_ERR(xdna, "Failed to allocate fw log buffer of size: 0x%llx", fw_log_size);
-		ret = -ENOMEM;
+		ret = PTR_ERR(dma_hdl);
 		goto exit;
 	}
 
 	amdxdna_mgmt_buff_clflush(dma_hdl, 0, 0);
 
-	strncpy(log_hdl->name, FW_LOG_NAME, sizeof(log_hdl->name));
+	strncpy(log_hdl->name, AMDXDNA_DEBUG_FW_LOG_NAME, sizeof(log_hdl->name));
 	log_hdl->dma_hdl = dma_hdl;
 	log_hdl->xdna = xdna;
 	log_hdl->tail = 0;
@@ -164,7 +157,6 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	return 0;
 exit:
 	amdxdna_mgmt_buff_free(dma_hdl);
-	kfree(dma_hdl);
 	kfree(log_hdl);
 	return ret;
 }
@@ -188,7 +180,6 @@ int amdxdna_fw_log_fini(struct amdxdna_dev *xdna)
 	log_hdl->enabled = false;
 
 	amdxdna_mgmt_buff_free(log_hdl->dma_hdl);
-	kfree(log_hdl->dma_hdl);
 	kfree(log_hdl);
 	return 0;
 }

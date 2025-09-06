@@ -7,11 +7,17 @@
 
 #include "amdxdna_mgmt.h"
 
-void *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, struct amdxdna_mgmt_dma_hdl *dma_hdl,
-			      size_t size, enum dma_data_direction dir)
+struct amdxdna_mgmt_dma_hdl *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, size_t size,
+						     enum dma_data_direction dir)
 {
+	struct amdxdna_mgmt_dma_hdl *dma_hdl;
+
 	if (!size)
-		return NULL;
+		return ERR_PTR(-EINVAL);
+
+	dma_hdl = kzalloc(sizeof(*dma_hdl), GFP_KERNEL);
+	if (!dma_hdl)
+		return ERR_PTR(-ENOMEM);
 
 	/*
 	 * The aligned size calculation is implemented to work around a known firmware issue that
@@ -36,13 +42,13 @@ void *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, struct amdxdna_mgmt_dma_
 	dma_hdl->vaddr = dma_alloc_noncoherent(xdna->ddev.dev, dma_hdl->aligned_size,
 					       &dma_hdl->dma_hdl, dir, GFP_KERNEL);
 	if (!dma_hdl->vaddr)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	dma_hdl->size = size;
 	dma_hdl->xdna = xdna;
 	dma_hdl->dir = dir;
 
-	return dma_hdl->vaddr;
+	return dma_hdl;
 }
 
 int amdxdna_mgmt_buff_clflush(struct amdxdna_mgmt_dma_hdl *dma_hdl, u32 offset, size_t size)
@@ -79,4 +85,5 @@ void amdxdna_mgmt_buff_free(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 {
 	dma_free_noncoherent(dma_hdl->xdna->ddev.dev, dma_hdl->aligned_size, dma_hdl->vaddr,
 			     dma_hdl->dma_hdl, dma_hdl->dir);
+	kfree(dma_hdl);
 }
