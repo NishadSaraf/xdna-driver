@@ -41,6 +41,9 @@ static irqreturn_t debug_irq_handler(int irq, void *data)
 	if (tail < debug_hdl->tail)
 		tail += BIT_ULL(32);
 
+	drm_WARN_ONCE(&debug_hdl->xdna->ddev, tail - debug_hdl->tail > BIT_ULL(31),
+		      "Unexpceted jump in tail pointer. Missed IRQ or bug");
+
 	WRITE_ONCE(debug_hdl->tail, tail);
 
 	wake_up(&debug_hdl->wait);
