@@ -5,10 +5,13 @@
 
 #include <drm/drm_cache.h>
 #include <linux/interrupt.h>
+#include <linux/jiffies.h>
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
+#include <linux/timer.h>
+#include <linux/workqueue.h>
 
 #include "amdxdna_debug.h"
 
@@ -21,15 +24,11 @@ module_param(fw_log_level, byte, 0444);
 MODULE_PARM_DESC(fw_log_level,
 		 " Firmware log verbosity: 0: NONE 1: ERROR (Default) 2: WARN 3: INFO 4: DEBUG");
 
-static irqreturn_t debug_irq_handler(int irq, void *data)
+static void amdxdna_update_tail(struct amdxdna_debug *debug_hdl)
 {
-	struct amdxdna_debug *debug_hdl = (struct amdxdna_debug *)data;
 	struct amdxdna_debug_footer *footer;
 	u32 offset;
 	u64 tail;
-
-	/* Clear the interrupt */
-	writel(0, debug_hdl->io_base + debug_hdl->msi_address);
 
 	offset = debug_hdl->dma_hdl->size - AMDXDNA_DEBUG_FOOTER_SIZE;
 	footer = debug_hdl->dma_hdl->vaddr + offset;
@@ -44,11 +43,11 @@ static irqreturn_t debug_irq_handler(int irq, void *data)
 	drm_WARN_ONCE(&debug_hdl->xdna->ddev, tail - debug_hdl->tail > BIT_ULL(31),
 		      "Unexpceted jump in tail pointer. Missed IRQ or bug");
 
-	WRITE_ONCE(debug_hdl->tail, tail);
-
-	wake_up(&debug_hdl->wait);
-
-	return IRQ_HANDLED;
+	if (debug_hdl->tail != tail) {
+		WRITE_ONCE(debug_hdl->tail, tail);
+		XDNA_INFO(debug_hdl->xdna, "New tail: 0x%llx", tail);
+		wake_up(&debug_hdl->wait);
+	}
 }
 
 static void amdxdna_debug_read_metadata(struct amdxdna_debug *debug_hdl)
@@ -65,10 +64,23 @@ static void amdxdna_debug_read_metadata(struct amdxdna_debug *debug_hdl)
 	debug_hdl->minor = footer->minor;
 	debug_hdl->major = footer->major;
 
-	XDNA_INFO(debug_hdl->xdna, "%s: version: %d.%d",
-		  debug_hdl->name, debug_hdl->major, debug_hdl->minor);
-	XDNA_INFO(debug_hdl->xdna, "%s: payload version: %d",
-		  debug_hdl->name, debug_hdl->payload_version);
+	XDNA_DBG(debug_hdl->xdna, "%s: version: %d.%d",
+		 debug_hdl->name, debug_hdl->major, debug_hdl->minor);
+	XDNA_DBG(debug_hdl->xdna, "%s: payload version: %d",
+		 debug_hdl->name, debug_hdl->payload_version);
+}
+
+#if 1
+static irqreturn_t debug_irq_handler(int irq, void *data)
+{
+	struct amdxdna_debug *debug_hdl = (struct amdxdna_debug *)data;
+
+	/* Clear the interrupt */
+	writel(0, debug_hdl->io_base + debug_hdl->msi_address);
+
+	amdxdna_update_tail(debug_hdl);
+
+	return IRQ_HANDLED;
 }
 
 static int amdxdna_debug_irq_init(struct amdxdna_debug *debug_hdl)
@@ -100,7 +112,7 @@ static void amdxdna_debug_irq_fini(struct amdxdna_debug *debug_hdl)
 	debug_hdl->msi_address = 0;
 	debug_hdl->msi_idx = 0;
 }
-
+#endif
 int amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
 {
 	return  amdxdna_fw_log_init(xdna);
@@ -109,6 +121,24 @@ int amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
 int amdxdna_fw_log_suspend(struct amdxdna_dev *xdna)
 {
 	return amdxdna_fw_log_fini(xdna);
+}
+
+static void amdxdna_debug_worker(struct work_struct *w)
+{
+	struct amdxdna_debug *debug_hdl = container_of(w, struct amdxdna_debug, work);
+
+	amdxdna_update_tail(debug_hdl);
+}
+
+static void amdxdna_debug_timer(struct timer_list *t)
+{
+	struct amdxdna_debug *debug_hdl = container_of(t, struct amdxdna_debug, timer);
+
+	/* Safe to call in IRQ context; schedules work to run later */
+	queue_work(system_wq, &debug_hdl->work);
+
+	/* Re-arm for the next period (Option B: steady periodic schedule) */
+	mod_timer(&debug_hdl->timer, jiffies + msecs_to_jiffies(AMDXDNA_POLL_INTERVAL_MS));
 }
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
@@ -151,11 +181,17 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 		goto exit;
 	}
 
+#if 1
 	ret = amdxdna_debug_irq_init(log_hdl);
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to init fw logging IRQ: %d", ret);
 		goto exit;
 	}
+#endif
+
+	INIT_WORK(&log_hdl->work, amdxdna_debug_worker);
+	timer_setup(&log_hdl->timer, amdxdna_debug_timer, 0);
+	mod_timer(&log_hdl->timer, jiffies + msecs_to_jiffies(AMDXDNA_POLL_INTERVAL_MS));
 
 	amdxdna_debug_read_metadata(log_hdl);
 
@@ -174,6 +210,9 @@ int amdxdna_fw_log_fini(struct amdxdna_dev *xdna)
 
 	if (!log_hdl->enabled)
 		return 0;
+
+	timer_delete_sync(&log_hdl->timer);
+	cancel_work_sync(&log_hdl->work);
 
 	amdxdna_debug_irq_fini(log_hdl);
 	if (xdna->dev_info->ops->fw_log_fini) {

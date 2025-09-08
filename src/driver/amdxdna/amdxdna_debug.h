@@ -8,12 +8,13 @@
 
 #include <linux/kernel.h>
 #include <linux/timer.h>
+#include <linux/workqueue.h>
 
 #include "amdxdna_mgmt.h"
 
 #define AMDXDNA_DEBUG_FOOTER_SIZE	SZ_4K
 #define AMDXDNA_DEBUG_FW_LOG_NAME	"xdna_fw_log"
-
+#define AMDXDNA_POLL_INTERVAL_MS	200
 
 struct amdxdna_debug_footer {
 	u8				minor;
@@ -39,9 +40,9 @@ struct amdxdna_debug {
 	u8				major;
 	u32				payload_version;
 	u64				tail;
-//	struct workqueue_struct	*wq;
-//	struct work_struct	work;
-//	struct timer_list	poll_timer;
+	struct work_struct		work;
+	//struct workqueue_struct		*wq;
+	struct timer_list		timer;
 };
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna);

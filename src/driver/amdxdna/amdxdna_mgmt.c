@@ -73,12 +73,12 @@ dma_addr_t amdxdna_mgmt_buff_get_dma_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 	return dma_hdl->dma_hdl;
 }
 
-void *amdxdna_mgmt_buff_get_cpu_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl)
+void *amdxdna_mgmt_buff_get_cpu_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl, u32 offset)
 {
-	if (!dma_hdl->aligned_size)
+	if (!dma_hdl->aligned_size || offset >= dma_hdl->size)
 		return ERR_PTR(-EINVAL);
 
-	return dma_hdl->vaddr;
+	return dma_hdl->vaddr + offset;
 }
 
 void amdxdna_mgmt_buff_free(struct amdxdna_mgmt_dma_hdl *dma_hdl)
