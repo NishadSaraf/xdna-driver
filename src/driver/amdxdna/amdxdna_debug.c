@@ -28,7 +28,7 @@ MODULE_PARM_DESC(fw_log_size, " Size of firmware log (Default 4MB). Min 8KB, Max
 
 bool fw_log_poll;
 module_param(fw_log_poll, bool, 0444);
-MODULE_PARM_DESC(fw_log_poll, " Enable FW log polling (Default false)");
+MODULE_PARM_DESC(fw_log_poll, " Enable firmware log polling (Default false)");
 
 static bool amdxdna_update_tail(struct amdxdna_debug *debug_hdl)
 {
