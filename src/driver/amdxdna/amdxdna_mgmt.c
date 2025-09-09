@@ -12,8 +12,11 @@ struct amdxdna_mgmt_dma_hdl *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, s
 {
 	struct amdxdna_mgmt_dma_hdl *dma_hdl;
 
-	if (!size)
+	if (!size || size > SZ_4M)
 		return ERR_PTR(-EINVAL);
+
+	if (size > SZ_4M)
+		return ERR_PTR(-ENOMEM);
 
 	dma_hdl = kzalloc(sizeof(*dma_hdl), GFP_KERNEL);
 	if (!dma_hdl)
@@ -39,11 +42,15 @@ struct amdxdna_mgmt_dma_hdl *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, s
 	 * If there is a requirement for physical contiguous memory larger than 4MB,
 	 * consider allocating the buffer from carved-out memory.
 	 */
+	if (dma_hdl->aligned_size > SZ_4M)
+		dma_hdl->aligned_size = SZ_4M;
+
 	dma_hdl->vaddr = dma_alloc_noncoherent(xdna->ddev.dev, dma_hdl->aligned_size,
 					       &dma_hdl->dma_hdl, dir, GFP_KERNEL);
-	if (!dma_hdl->vaddr)
-		kfree();
+	if (!dma_hdl->vaddr) {
+		kfree(dma_hdl);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	dma_hdl->size = size;
 	dma_hdl->xdna = xdna;
@@ -54,6 +61,9 @@ struct amdxdna_mgmt_dma_hdl *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, s
 
 int amdxdna_mgmt_buff_clflush(struct amdxdna_mgmt_dma_hdl *dma_hdl, u32 offset, size_t size)
 {
+	if (!dma_hdl)
+		return -EINVAL;
+
 	if (offset + size > dma_hdl->size)
 		return -EINVAL;
 
@@ -68,6 +78,9 @@ int amdxdna_mgmt_buff_clflush(struct amdxdna_mgmt_dma_hdl *dma_hdl, u32 offset, 
 
 dma_addr_t amdxdna_mgmt_buff_get_dma_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 {
+	if (!dma_hdl)
+		return 0;
+
 	if (!dma_hdl->aligned_size)
 		return 0;
 
@@ -76,6 +89,9 @@ dma_addr_t amdxdna_mgmt_buff_get_dma_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 
 void *amdxdna_mgmt_buff_get_cpu_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl, u32 offset)
 {
+	if (!dma_hdl)
+		return ERR_PTR(-EINVAL);
+
 	if (!dma_hdl->aligned_size || offset >= dma_hdl->size)
 		return ERR_PTR(-EINVAL);
 
@@ -84,6 +100,9 @@ void *amdxdna_mgmt_buff_get_cpu_addr(struct amdxdna_mgmt_dma_hdl *dma_hdl, u32 o
 
 void amdxdna_mgmt_buff_free(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 {
+	if (!dma_hdl)
+		return;
+
 	dma_free_noncoherent(dma_hdl->xdna->ddev.dev, dma_hdl->aligned_size, dma_hdl->vaddr,
 			     dma_hdl->dma_hdl, dma_hdl->dir);
 	dma_hdl->vaddr = NULL;

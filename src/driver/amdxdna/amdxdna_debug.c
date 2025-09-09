@@ -17,14 +17,18 @@
 #include "amdxdna_debug.h"
 #include "aie2_msg_priv.h"
 
-u64 fw_log_size = SZ_1M;
-module_param(fw_log_size, ullong, 0444);
-MODULE_PARM_DESC(fw_log_size, "Size of firmware log. Default 1MB. Min 8KB, Max 3MB");
-
 u8 fw_log_level = 1;
 module_param(fw_log_level, byte, 0444);
 MODULE_PARM_DESC(fw_log_level,
-		 " Firmware log verbosity: 0: NONE 1: ERROR (Default) 2: WARN 3: INFO 4: DEBUG");
+		 " Firmware log verbosity: 0: DISABLE 1: ERROR (Default) 2: WARN 3: INFO 4: DEBUG");
+
+u64 fw_log_size = SZ_4M;
+module_param(fw_log_size, ullong, 0444);
+MODULE_PARM_DESC(fw_log_size, " Size of firmware log (Default 4MB). Min 8KB, Max 4MB");
+
+bool fw_log_poll;
+module_param(fw_log_poll, bool, 0444);
+MODULE_PARM_DESC(fw_log_poll, " Enable FW log polling (Default false)");
 
 static bool amdxdna_update_tail(struct amdxdna_debug *debug_hdl)
 {
@@ -231,11 +235,17 @@ static void amdxdna_debug_irq_fini(struct amdxdna_debug *debug_hdl)
 
 int amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
 {
-	return  amdxdna_fw_log_init(xdna);
+	return amdxdna_fw_log_init(xdna);
 }
 
 int amdxdna_fw_log_suspend(struct amdxdna_dev *xdna)
 {
+	/*
+	 * Cache the current state FW polling to fw_log_poll to retain the polling state across
+	 * suspend/resume
+	 */
+	fw_log_poll = xdna->fw_log->polling;
+
 	return amdxdna_fw_log_fini(xdna);
 }
 
@@ -285,12 +295,12 @@ void amdxdna_debug_enable_polling(struct amdxdna_debug *debug_hdl, bool enable)
 		INIT_WORK(&debug_hdl->work, amdxdna_debug_worker);
 		timer_setup(&debug_hdl->timer, amdxdna_debug_timer, 0);
 		mod_timer(&debug_hdl->timer, jiffies + msecs_to_jiffies(AMDXDNA_POLL_INTERVAL_MS));
-		debug_hdl->polling = true;
 	} else {
 		timer_delete_sync(&debug_hdl->timer);
 		cancel_work_sync(&debug_hdl->work);
-		debug_hdl->polling = false;
 	}
+
+	debug_hdl->polling = enable;
 }
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
@@ -302,7 +312,12 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	if (!xdna->dev_info->ops->fw_log_init)
 		return -EOPNOTSUPP;
 
-	if (fw_log_size < SZ_8K || fw_log_size >= SZ_4M) {
+	if (!fw_log_level) {
+		XDNA_WARN(xdna, "FW logging disabled. Default level: %d", fw_log_level);
+		return 0;
+	}
+
+	if (fw_log_size < SZ_8K || fw_log_size > SZ_4M) {
 		XDNA_ERR(xdna, "Invalid fw log buffer size: 0x%llx", fw_log_size);
 		return -EINVAL;
 	}
@@ -336,21 +351,17 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	}
 
 	ret = amdxdna_debug_irq_init(log_hdl);
-	if (ret) {
+	if (ret)
 		XDNA_ERR(xdna, "Failed to init fw logging IRQ: %d", ret);
-		goto fw_fini;
-	}
+
+	/* Enabling polling, if IRQ initialization fails or enabled by default */
+	if (ret || fw_log_poll)
+		amdxdna_debug_enable_polling(log_hdl, true);
 
 	amdxdna_debug_read_metadata(log_hdl);
 
 	log_hdl->enabled = true;
 	return 0;
-fw_fini:
-	if (xdna->dev_info->ops->fw_log_fini) {
-		ret = xdna->dev_info->ops->fw_log_fini(xdna);
-		if (ret)
-			XDNA_ERR(xdna, "Failed to disable fw logging: %d", ret);
-	}
 mfree:
 	amdxdna_mgmt_buff_free(dma_hdl);
 kfree:

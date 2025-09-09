@@ -894,7 +894,7 @@ static ssize_t aie2_fw_log_dump_set(struct file *file, const char __user *ptr,
 	bool dump;
 	int ret;
 
-	if (!xdna->fw_log) {
+	if (!xdna->fw_log || !xdna->fw_log->enabled) {
 		XDNA_ERR(xdna, "FW logging is not enabled");
 		return -EINVAL;
 	}
@@ -913,7 +913,7 @@ static int aie2_fw_log_dump_get(struct seq_file *m, void *unused)
 {
 	struct amdxdna_dev_hdl *ndev = m->private;
 
-	if (!ndev->xdna->fw_log) {
+	if (!ndev->xdna->fw_log || !ndev->xdna->fw_log->enabled) {
 		XDNA_ERR(ndev->xdna, "FW logging is not enabled");
 		return -EINVAL;
 	}
