@@ -43,6 +43,7 @@ struct amdxdna_debug {
 	u8				minor;
 	u8				major;
 	u32				payload_version;
+	spinlock_t			lock;
 	u64				tail;
 	u64				head;
 };

@@ -86,4 +86,8 @@ void amdxdna_mgmt_buff_free(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 	dma_free_noncoherent(dma_hdl->xdna->ddev.dev, dma_hdl->aligned_size, dma_hdl->vaddr,
 			     dma_hdl->dma_hdl, dma_hdl->dir);
 	kfree(dma_hdl);
+	dma_hdl->vaddr = NULL;
+	dma_hdl->size = 0;
+	dma_hdl->dma_hdl = 0;
+	dma_hdl->aligned_size = 0;
 }

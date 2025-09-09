@@ -894,6 +894,11 @@ static ssize_t aie2_fw_log_dump_set(struct file *file, const char __user *ptr,
 	bool dump;
 	int ret;
 
+	if (!xdna->fw_log) {
+		XDNA_ERR(xdna, "FW logging is not enabled");
+		return -EINVAL;
+	}
+
 	ret =  kstrtobool_from_user(ptr, len, &dump);
 	if (ret) {
 		XDNA_ERR(xdna, "Invalid input value, ret %d", ret);
@@ -907,6 +912,11 @@ static ssize_t aie2_fw_log_dump_set(struct file *file, const char __user *ptr,
 static int aie2_fw_log_dump_get(struct seq_file *m, void *unused)
 {
 	struct amdxdna_dev_hdl *ndev = m->private;
+
+	if (!ndev->xdna->fw_log) {
+		XDNA_ERR(ndev->xdna, "FW logging is not enabled");
+		return -EINVAL;
+	}
 
 	seq_printf(m, "%s\n", ndev->xdna->fw_log->polling ? "true" : "false");
 
