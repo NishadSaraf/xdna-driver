@@ -14,7 +14,8 @@
 
 #define AMDXDNA_DEBUG_FOOTER_SIZE	SZ_4K
 #define AMDXDNA_DEBUG_FW_LOG_NAME	"xdna_fw_log"
-#define AMDXDNA_POLL_INTERVAL_MS	200
+#define AMDXDNA_FW_LOG_MSG_ALIGN	8
+#define AMDXDNA_POLL_INTERVAL_MS	50
 
 struct amdxdna_debug_footer {
 	u8				minor;
@@ -32,6 +33,9 @@ struct amdxdna_debug {
 	struct amdxdna_dev		*xdna;
 	struct amdxdna_mgmt_dma_hdl	*dma_hdl;
 	struct wait_queue_head		wait;
+	bool				polling;
+	struct work_struct		work;
+	struct timer_list		timer;
 	void			__iomem *io_base;
 	int				irq;
 	u32				msi_idx;
@@ -40,14 +44,13 @@ struct amdxdna_debug {
 	u8				major;
 	u32				payload_version;
 	u64				tail;
-	struct work_struct		work;
-	//struct workqueue_struct		*wq;
-	struct timer_list		timer;
+	u64				head;
 };
 
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna);
 int amdxdna_fw_log_fini(struct amdxdna_dev *xdna);
 int amdxdna_fw_log_resume(struct amdxdna_dev *xdna);
 int amdxdna_fw_log_suspend(struct amdxdna_dev *xdna);
+void amdxdna_debug_enable_polling(struct amdxdna_debug *debug_hdl, bool enable);
 
 #endif /* _AMDXDNA_DEBUG_H_ */

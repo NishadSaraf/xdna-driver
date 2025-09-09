@@ -886,149 +886,34 @@ free_buf:
 
 AIE2_DBGFS_FOPS(get_app_health, aie2_get_app_health_show, NULL);
 
-static u64 fw_log_tail;
-static const char * const log_level_str[] = {
-	"OFF",
-	"ERR",
-	"WRN",
-	"INF",
-	"DBG",
-	"MAX"
-};
-
-#if 1
-static void aie2_fw_log_print(struct amdxdna_debug *log, struct seq_file *m, u8 *buffer,
-			      size_t size)
+static ssize_t aie2_fw_log_dump_set(struct file *file, const char __user *ptr,
+				    size_t len, loff_t *off)
 {
-	u8 *end = buffer + size;
-
-	if (!size)
-		return;
-
-	//XDNA_INFO(log->xdna, "Size: %ld", size);
-	while (buffer < end) {
-		struct fw_log_header {
-			u64 timestamp;
-			u32 format      : 1;
-			u32 reserved_1  : 7;
-			u32 level       : 3;
-			u32 reserved_11 : 5;
-			u32 appn        : 8;
-			u32 argc        : 8;
-			u32 line        : 16;
-			u32 module      : 16;
-		} *header;
-		const u32 header_size = sizeof(struct fw_log_header);
-		char appid[20];
-		u32 msg_size;
-		//u8 *tmp = 0;
-
-		header = (struct fw_log_header *)buffer;
-
-		if (header->format != FW_LOG_FORMAT_FULL || !header->argc || header->level > 4) {
-			//tmp = PTR_ALIGN((u8 *)buffer, LOG_MSG_ALIGN);
-			//if (tmp == buffer) {
-				buffer += LOG_MSG_ALIGN;
-			//}
-			XDNA_ERR(log->xdna, "Looking for apt header: 0x%px\n", buffer);
-			XDNA_ERR(log->xdna, "Format: %d Argc: %d\n", header->format, header->argc);
-			continue;
-		}
-
-		msg_size = (header->argc) * sizeof(u32);
-		if (msg_size + header_size > size) {
-			XDNA_ERR(log->xdna, "Log entry size exceeds available buffer size");
-			return;
-		}
-		buffer[header_size + msg_size - 1] = '\0';
-
-		if (header->appn > 15)
-			scnprintf(appid, sizeof(appid), "MGMNT");
-		else
-			scnprintf(appid, sizeof(appid), "APP%2d", header->appn);
-
-		XDNA_INFO(log->xdna, "[%lld] [%s] [%s]: %s", header->timestamp,
-			   log_level_str[header->level], appid, (char*)(buffer + header_size));
-#if 1
-		seq_printf(m, "[%lld] [%s] [%s]: %s", header->timestamp,
-			   log_level_str[header->level], appid, (char*)(buffer + header_size));
-#else
-		pr_info("Buffer: 0x%px end: 0x%px", buffer, end);
-		pr_info("Rem size: 0x%lx", end - buffer);
-		buffer = PTR_ALIGN((u8 *)(buffer + header_size + msg_size), LOG_MSG_ALIGN);
-#endif
-		buffer += ALIGN(header_size + msg_size, LOG_MSG_ALIGN);
-	}
-	//XDNA_INFO(log->xdna, "%d", __LINE__);
-	return;
-}
-#endif
-static int aie2_fw_log_show(struct seq_file *m, void *unused)
-{
-	struct amdxdna_dev_hdl *ndev = m->private;
+	struct amdxdna_dev_hdl *ndev = file_to_ndev_rw(file);
 	struct amdxdna_dev *xdna = ndev->xdna;
-	struct amdxdna_mgmt_dma_hdl *dma_hdl;
-	struct amdxdna_debug *log;
-	u32 start, aligned, end;
-	size_t size, log_size;
-	void *tmp;
-	u64 tail;
+	bool dump;
 	int ret;
 
-	log = xdna->fw_log;
-	dma_hdl = log->dma_hdl;
-	log_size = dma_hdl->size;
-
-	while (1) {
-	ret = wait_event_interruptible(log->wait, fw_log_tail != READ_ONCE(log->tail));
+	ret =  kstrtobool_from_user(ptr, len, &dump);
 	if (ret) {
-		XDNA_WARN(xdna, "Wait interrupted by user: %d\n", ret);
-		return 0;
+		XDNA_ERR(xdna, "Invalid input value, ret %d", ret);
+		return ret;
 	}
 
-	tail = READ_ONCE(log->tail);
-	start = fw_log_tail % log_size;
-	end = tail % log_size;
+	amdxdna_debug_enable_polling(xdna->fw_log, dump);
+	return len;
+}
 
-	//XDNA_INFO(xdna, "Tail Drv: 0x%llx FW: 0x%llx", fw_log_tail, tail);
-	//XDNA_INFO(xdna, "Start: 0x%x End: 0x%x", start, end);
-	if (start == end)
-		return 0;
+static int aie2_fw_log_dump_get(struct seq_file *m, void *unused)
+{
+	struct amdxdna_dev_hdl *ndev = m->private;
 
-	if (!IS_ALIGNED(start, LOG_MSG_ALIGN)) {
-		XDNA_WARN(xdna, "Start offset of fw log not 8-Byte aligned");
-		aligned = ALIGN(start, LOG_MSG_ALIGN);
-		start = aligned > log_size ? 0 : aligned;
-	}
+	seq_printf(m, "%s\n", ndev->xdna->fw_log->polling ? "true" : "false");
 
-	size = (end > start) ? (end - start) : (log_size - end + start);
-
-	tmp = kzalloc(size, GFP_KERNEL);
-	if (!tmp)
-		return -ENOMEM;
-
-	if (start > end) {
-		XDNA_INFO(xdna, "Split Buffer Cpy");
-		/* First chuck: Copy from start point until the end of log buffer */
-		amdxdna_mgmt_buff_clflush(dma_hdl, start, log_size - start);
-		memcpy(tmp, amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, start), log_size - start);
-		/* Last chuck: Wrap around and copy from the srat of log buffer to end */
-		amdxdna_mgmt_buff_clflush(dma_hdl, 0, end);
-		memcpy(tmp + (log_size - start), amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, 0), end);
-	} else {
-		amdxdna_mgmt_buff_clflush(dma_hdl, start, end - start);
-		memcpy(tmp, amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, start), end - start);
-	}
-
-	//XDNA_INFO(xdna, "Size of buff: 0x%lx", size);
-	aie2_fw_log_print(log, m, tmp, size);
-	fw_log_tail = tail;
-	}
-	kfree(tmp);
 	return 0;
 }
 
-AIE2_DBGFS_FOPS(fw_log, aie2_fw_log_show, NULL);
+AIE2_DBGFS_FOPS(fw_log_dump, aie2_fw_log_dump_get, aie2_fw_log_dump_set);
 
 const struct {
 	const char *name;
@@ -1051,7 +936,7 @@ const struct {
 //	AIE2_DBGFS_FILE(event_trace_cfg, 0600),
 	AIE2_DBGFS_FILE(ctx_rq, 0400),
 	AIE2_DBGFS_FILE(get_app_health, 0400),
-	AIE2_DBGFS_FILE(fw_log, 0400),
+	AIE2_DBGFS_FILE(fw_log_dump, 0400),
 //	AIE2_DBGFS_FILE(dram_logging, 0600),
 //	AIE2_DBGFS_FILE(dram_log_cfg, 0600),
 };

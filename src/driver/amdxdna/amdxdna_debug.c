@@ -14,17 +14,18 @@
 #include <linux/workqueue.h>
 
 #include "amdxdna_debug.h"
+#include "aie2_msg_priv.h"
 
 u64 fw_log_size = SZ_1M;
 module_param(fw_log_size, ullong, 0444);
-MODULE_PARM_DESC(fw_log_size, "Size of firmware log. Default 1MB. Min 8KB, Max 4MB");
+MODULE_PARM_DESC(fw_log_size, "Size of firmware log. Default 1MB. Min 8KB, Max 3MB");
 
 u8 fw_log_level = 1;
 module_param(fw_log_level, byte, 0444);
 MODULE_PARM_DESC(fw_log_level,
 		 " Firmware log verbosity: 0: NONE 1: ERROR (Default) 2: WARN 3: INFO 4: DEBUG");
 
-static void amdxdna_update_tail(struct amdxdna_debug *debug_hdl)
+static bool amdxdna_update_tail(struct amdxdna_debug *debug_hdl)
 {
 	struct amdxdna_debug_footer *footer;
 	u32 offset;
@@ -47,8 +48,123 @@ static void amdxdna_update_tail(struct amdxdna_debug *debug_hdl)
 		WRITE_ONCE(debug_hdl->tail, tail);
 		XDNA_INFO(debug_hdl->xdna, "New tail: 0x%llx", tail);
 		wake_up(&debug_hdl->wait);
+		return true;
 	}
+	return false;
 }
+
+#if 1
+static const char * const fw_log_level_str[] = {
+	"OFF",
+	"ERR",
+	"WRN",
+	"INF",
+	"DBG",
+	"MAX"
+};
+
+static void amdxdna_fw_log_print(struct amdxdna_debug *log, u8 *buffer, size_t size)
+{
+	u8 *end = buffer + size;
+
+	if (!size)
+		return;
+
+	while (buffer < end) {
+		struct fw_log_header {
+			u64 timestamp;
+			u32 format      : 1;
+			u32 reserved_1  : 7;
+			u32 level       : 3;
+			u32 reserved_11 : 5;
+			u32 appn        : 8;
+			u32 argc        : 8;
+			u32 line        : 16;
+			u32 module      : 16;
+		} *header;
+		const u32 header_size = sizeof(struct fw_log_header);
+		char appid[20];
+		u32 msg_size;
+
+		header = (struct fw_log_header *)buffer;
+
+		if (header->format != FW_LOG_FORMAT_FULL || !header->argc || header->level > 4) {
+				buffer += AMDXDNA_FW_LOG_MSG_ALIGN;
+			XDNA_ERR(log->xdna, "Looking for apt header: 0x%px\n", buffer);
+			XDNA_ERR(log->xdna, "Format: %d Argc: %d\n", header->format, header->argc);
+			continue;
+		}
+
+		msg_size = (header->argc) * sizeof(u32);
+		if (msg_size + header_size > size) {
+			XDNA_ERR(log->xdna, "Log entry size exceeds available buffer size");
+			return;
+		}
+		//buffer[header_size + msg_size - 1] = '\0';
+
+		if (header->appn > 15)
+			scnprintf(appid, sizeof(appid), "MGMNT");
+		else
+			scnprintf(appid, sizeof(appid), "APP%2d", header->appn);
+
+		XDNA_INFO(log->xdna, "[%lld] [%s] [%s]: %s", header->timestamp,
+			  fw_log_level_str[header->level], appid, (char*)(buffer + header_size));
+
+		//buffer = PTR_ALIGN((u8 *)(buffer + header_size + msg_size), AMDXDNA_FW_LOG_MSG_ALIGN);
+		buffer += ALIGN(header_size + msg_size, AMDXDNA_FW_LOG_MSG_ALIGN);
+	}
+	return;
+}
+
+static int amdxdna_debug_fetch_payload(struct amdxdna_debug *debug_hdl, u8 *buffer, size_t *size)
+{
+	struct amdxdna_dev *xdna = debug_hdl->xdna;
+	struct amdxdna_mgmt_dma_hdl *dma_hdl;
+	size_t req_size, log_size;
+	u32 start, aligned, end;
+	u64 tail;
+
+	dma_hdl = debug_hdl->dma_hdl;
+	log_size = dma_hdl->size;
+
+	tail = READ_ONCE(debug_hdl->tail);
+	start = debug_hdl->head % log_size;
+	end = tail % log_size;
+
+	if (start == end)
+		return 0;
+
+	if (!IS_ALIGNED(start, AMDXDNA_FW_LOG_MSG_ALIGN)) {
+		XDNA_WARN(xdna, "Start offset of fw log is not 8-Byte aligned");
+		aligned = ALIGN(start, AMDXDNA_FW_LOG_MSG_ALIGN);
+		start = aligned > log_size ? 0 : aligned;
+	}
+
+	req_size = (end > start) ? (end - start) : (log_size - end + start);
+
+	if (req_size > *size)
+		return -ENOSPC;
+
+	if (start > end) {
+		/* First chuck: Copy from start point until the end of log buffer */
+		amdxdna_mgmt_buff_clflush(dma_hdl, start, log_size - start);
+		memcpy(buffer, amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, start), log_size - start);
+		/* Last chuck: Wrap around and copy from the start of log buffer to end */
+		amdxdna_mgmt_buff_clflush(dma_hdl, 0, end);
+		memcpy(buffer + (log_size - start), amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, 0), end);
+	} else {
+		amdxdna_mgmt_buff_clflush(dma_hdl, start, end - start);
+		memcpy(buffer, amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, start), end - start);
+	}
+
+	*size = req_size;
+	debug_hdl->head = tail;
+
+	//XDNA_INFO(xdna, "Size of buff: 0x%lx", size);
+	return 0;
+
+}
+#endif
 
 static void amdxdna_debug_read_metadata(struct amdxdna_debug *debug_hdl)
 {
@@ -70,7 +186,6 @@ static void amdxdna_debug_read_metadata(struct amdxdna_debug *debug_hdl)
 		 debug_hdl->name, debug_hdl->payload_version);
 }
 
-#if 1
 static irqreturn_t debug_irq_handler(int irq, void *data)
 {
 	struct amdxdna_debug *debug_hdl = (struct amdxdna_debug *)data;
@@ -112,7 +227,7 @@ static void amdxdna_debug_irq_fini(struct amdxdna_debug *debug_hdl)
 	debug_hdl->msi_address = 0;
 	debug_hdl->msi_idx = 0;
 }
-#endif
+
 int amdxdna_fw_log_resume(struct amdxdna_dev *xdna)
 {
 	return  amdxdna_fw_log_init(xdna);
@@ -126,8 +241,26 @@ int amdxdna_fw_log_suspend(struct amdxdna_dev *xdna)
 static void amdxdna_debug_worker(struct work_struct *w)
 {
 	struct amdxdna_debug *debug_hdl = container_of(w, struct amdxdna_debug, work);
+	size_t size = SZ_4M;
+	u8 *buffer;
+	int ret;
 
-	amdxdna_update_tail(debug_hdl);
+	if (!amdxdna_update_tail(debug_hdl))
+		return;
+
+	buffer = kzalloc(size, GFP_KERNEL);
+	if (!buffer)
+		XDNA_ERR(debug_hdl->xdna, "Failed to allocate fw fetch buffer");
+
+	ret = amdxdna_debug_fetch_payload(debug_hdl, buffer, &size);
+	if (ret) {
+		XDNA_ERR(debug_hdl->xdna, "Failed to fetch fw buffer");
+		goto exit;
+	}
+
+	amdxdna_fw_log_print(debug_hdl, buffer, size);
+exit:
+	kfree(buffer);
 }
 
 static void amdxdna_debug_timer(struct timer_list *t)
@@ -141,6 +274,23 @@ static void amdxdna_debug_timer(struct timer_list *t)
 	mod_timer(&debug_hdl->timer, jiffies + msecs_to_jiffies(AMDXDNA_POLL_INTERVAL_MS));
 }
 
+void amdxdna_debug_enable_polling(struct amdxdna_debug *debug_hdl, bool enable)
+{
+	if (debug_hdl->polling == enable)
+		return;
+
+	if (enable) {
+		INIT_WORK(&debug_hdl->work, amdxdna_debug_worker);
+		timer_setup(&debug_hdl->timer, amdxdna_debug_timer, 0);
+		mod_timer(&debug_hdl->timer, jiffies + msecs_to_jiffies(AMDXDNA_POLL_INTERVAL_MS));
+		debug_hdl->polling = true;
+	} else {
+		timer_delete_sync(&debug_hdl->timer);
+		cancel_work_sync(&debug_hdl->work);
+		debug_hdl->polling = false;
+	}
+}
+
 int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 {
 	struct amdxdna_mgmt_dma_hdl *dma_hdl;
@@ -150,7 +300,7 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	if (!xdna->dev_info->ops->fw_log_init)
 		return -EOPNOTSUPP;
 
-	if (fw_log_size < SZ_8K) {
+	if (fw_log_size < SZ_8K || fw_log_size >= SZ_4M) {
 		XDNA_ERR(xdna, "Invalid fw log buffer size: 0x%llx", fw_log_size);
 		return -EINVAL;
 	}
@@ -172,6 +322,7 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	log_hdl->dma_hdl = dma_hdl;
 	log_hdl->xdna = xdna;
 	log_hdl->tail = 0;
+	log_hdl->head = 0;
 	init_waitqueue_head(&log_hdl->wait);
 	xdna->fw_log = log_hdl;
 
@@ -181,17 +332,11 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 		goto exit;
 	}
 
-#if 1
 	ret = amdxdna_debug_irq_init(log_hdl);
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to init fw logging IRQ: %d", ret);
 		goto exit;
 	}
-#endif
-
-	INIT_WORK(&log_hdl->work, amdxdna_debug_worker);
-	timer_setup(&log_hdl->timer, amdxdna_debug_timer, 0);
-	mod_timer(&log_hdl->timer, jiffies + msecs_to_jiffies(AMDXDNA_POLL_INTERVAL_MS));
 
 	amdxdna_debug_read_metadata(log_hdl);
 
@@ -211,9 +356,7 @@ int amdxdna_fw_log_fini(struct amdxdna_dev *xdna)
 	if (!log_hdl->enabled)
 		return 0;
 
-	timer_delete_sync(&log_hdl->timer);
-	cancel_work_sync(&log_hdl->work);
-
+	amdxdna_debug_enable_polling(log_hdl, false);
 	amdxdna_debug_irq_fini(log_hdl);
 	if (xdna->dev_info->ops->fw_log_fini) {
 		ret = xdna->dev_info->ops->fw_log_fini(xdna);
