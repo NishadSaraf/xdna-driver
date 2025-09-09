@@ -42,6 +42,7 @@ struct amdxdna_mgmt_dma_hdl *amdxdna_mgmt_buff_alloc(struct amdxdna_dev *xdna, s
 	dma_hdl->vaddr = dma_alloc_noncoherent(xdna->ddev.dev, dma_hdl->aligned_size,
 					       &dma_hdl->dma_hdl, dir, GFP_KERNEL);
 	if (!dma_hdl->vaddr)
+		kfree();
 		return ERR_PTR(-ENOMEM);
 
 	dma_hdl->size = size;
@@ -85,9 +86,10 @@ void amdxdna_mgmt_buff_free(struct amdxdna_mgmt_dma_hdl *dma_hdl)
 {
 	dma_free_noncoherent(dma_hdl->xdna->ddev.dev, dma_hdl->aligned_size, dma_hdl->vaddr,
 			     dma_hdl->dma_hdl, dma_hdl->dir);
-	kfree(dma_hdl);
 	dma_hdl->vaddr = NULL;
 	dma_hdl->size = 0;
 	dma_hdl->dma_hdl = 0;
 	dma_hdl->aligned_size = 0;
+	kfree(dma_hdl);
+	dma_hdl = NULL;
 }

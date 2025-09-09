@@ -199,6 +199,11 @@ static int amdxdna_debug_irq_init(struct amdxdna_debug *debug_hdl)
 	struct amdxdna_dev *xdna = debug_hdl->xdna;
 	int ret;
 
+	if (!debug_hdl->msi_idx || !debug_hdl->msi_address) {
+		XDNA_ERR(xdna, "MSI ID or address undefined");
+		return -EINVAL;
+	}
+
 	ret = pci_irq_vector(to_pci_dev(xdna->ddev.dev), debug_hdl->msi_idx);
 	if (ret < 0) {
 		XDNA_ERR(xdna, "Failed to get IRQ number, %d", ret);
@@ -310,7 +315,7 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	if (IS_ERR(dma_hdl)) {
 		XDNA_ERR(xdna, "Failed to allocate fw log buffer of size: 0x%llx", fw_log_size);
 		ret = PTR_ERR(dma_hdl);
-		goto exit;
+		goto kfree;
 	}
 
 	amdxdna_mgmt_buff_clflush(dma_hdl, 0, 0);
@@ -327,21 +332,28 @@ int amdxdna_fw_log_init(struct amdxdna_dev *xdna)
 	ret = xdna->dev_info->ops->fw_log_init(xdna, fw_log_size, fw_log_level);
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to configure fw logging: %d", ret);
-		goto exit;
+		goto mfree;
 	}
 
 	ret = amdxdna_debug_irq_init(log_hdl);
 	if (ret) {
 		XDNA_ERR(xdna, "Failed to init fw logging IRQ: %d", ret);
-		goto exit;
+		goto fw_fini;
 	}
 
 	amdxdna_debug_read_metadata(log_hdl);
 
 	log_hdl->enabled = true;
 	return 0;
-exit:
+fw_fini:
+	if (xdna->dev_info->ops->fw_log_fini) {
+		ret = xdna->dev_info->ops->fw_log_fini(xdna);
+		if (ret)
+			XDNA_ERR(xdna, "Failed to disable fw logging: %d", ret);
+	}
+mfree:
 	amdxdna_mgmt_buff_free(dma_hdl);
+kfree:
 	kfree(log_hdl);
 	return ret;
 }
@@ -351,22 +363,21 @@ int amdxdna_fw_log_fini(struct amdxdna_dev *xdna)
 	struct amdxdna_debug *log_hdl = xdna->fw_log;
 	int ret;
 
+	if (!xdna->dev_info->ops->fw_log_fini)
+		return -EOPNOTSUPP;
+
 	if (!log_hdl || !log_hdl->enabled)
 		return 0;
 
-	if (xdna->dev_info->ops->fw_log_fini) {
-		ret = xdna->dev_info->ops->fw_log_fini(xdna);
-		if (ret) {
-			XDNA_ERR(xdna, "Failed to disable fw logging: %d", ret);
-			return ret;
-		}
-	}
+	ret = xdna->dev_info->ops->fw_log_fini(xdna);
+	if (ret)
+		XDNA_ERR(xdna, "Failed to disable fw logging: %d", ret);
+
 	amdxdna_debug_irq_fini(log_hdl);
 	amdxdna_debug_enable_polling(log_hdl, false);
-	log_hdl->enabled = false;
-
 	amdxdna_mgmt_buff_free(log_hdl->dma_hdl);
 	kfree(log_hdl);
 	xdna->fw_log = NULL;
+	log_hdl->enabled = false;
 	return 0;
 }
