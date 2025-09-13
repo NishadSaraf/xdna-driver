@@ -511,6 +511,7 @@ int aie2_query_aie_telemetry(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_
 			     u32 type, u32 size, struct aie_version *version);
 int aie2_get_app_health(struct amdxdna_dev_hdl *ndev, struct aie2_mgmt_dma_hdl *mgmt_hdl,
 			u32 context_id, u32 size);
+void aie2_reset_app_health_report(struct app_health_report *r);
 int aie2_query_aie_version(struct amdxdna_dev_hdl *ndev, struct aie_version *version);
 int aie2_query_aie_metadata(struct amdxdna_dev_hdl *ndev, struct aie_metadata *metadata);
 int aie2_query_aie_firmware_version(struct amdxdna_dev_hdl *ndev,
@@ -580,6 +581,50 @@ void aie2_rq_del(struct aie2_ctx_rq *rq, struct amdxdna_ctx *ctx);
 int aie2_rq_submit_enter(struct aie2_ctx_rq *rq, struct amdxdna_ctx *ctx);
 void aie2_rq_submit_exit(struct amdxdna_ctx *ctx);
 void aie2_rq_yield(struct amdxdna_ctx *ctx);
+
+static inline bool aie2_is_ctx_connected(struct amdxdna_ctx *ctx)
+{
+	return ctx->priv->status == CTX_STATE_CONNECTED;
+}
+
+static inline bool aie2_is_ctx_rt(struct amdxdna_ctx *ctx)
+{
+	return ctx->priv->priority == CTX_RQ_REALTIME;
+}
+
+static inline bool aie2_is_ctx_debug(struct amdxdna_ctx *ctx)
+{
+	return ctx->priv->status == CTX_STATE_DEBUG;
+}
+
+static inline bool aie2_is_ctx_fatal(struct amdxdna_ctx *ctx)
+{
+	if (ctx->priv->status == CTX_STATE_DEAD)
+		return true;
+
+	return aie2_is_ctx_debug(ctx);
+}
+
+static inline bool aie2_is_ctx_disconnected(struct amdxdna_ctx *ctx)
+{
+	return ctx->priv->status == CTX_STATE_DISCONNECTED;
+}
+
+static inline bool aie2_is_ctx_dispatched(struct amdxdna_ctx *ctx)
+{
+	return ctx->priv->status == CTX_STATE_DISPATCHED;
+}
+
+static inline bool aie2_is_ctx_disconnecting(struct amdxdna_ctx *ctx)
+{
+	return ctx->priv->status == CTX_STATE_DISCONNECTING;
+}
+
+static inline bool ctx_should_stop(struct amdxdna_ctx *ctx)
+{
+	return aie2_is_ctx_connected(ctx) || aie2_is_ctx_disconnecting(ctx) ||
+	       aie2_is_ctx_debug(ctx);
+}
 
 /* aie2_logging.c */
 bool aie2_is_dram_logging_enable(struct amdxdna_dev_hdl *ndev);
