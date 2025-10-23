@@ -108,7 +108,7 @@ void aie2_psp_stop(struct psp_device *psp)
 		dev_err(psp->dev, "release tmr failed, ret %d", ret);
 }
 
-int aie2_psp_start(struct psp_device *psp)
+int aie2_psp_start(struct psp_device *psp, bool copyfw)
 {
 	u32 reg_vals[PSP_NUM_IN_REGS];
 	int ret;
@@ -126,7 +126,8 @@ int aie2_psp_start(struct psp_device *psp)
 
 	memset(reg_vals, 0, sizeof(reg_vals));
 	reg_vals[0] = PSP_START;
-	reg_vals[1] = PSP_START_COPY_FW;
+	if (copyfw)
+		reg_vals[1] = PSP_START_COPY_FW;
 	ret = psp_exec(psp, reg_vals);
 	if (ret) {
 		dev_err(psp->dev, "failed to start fw, ret %d", ret);

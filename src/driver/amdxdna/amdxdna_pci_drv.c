@@ -123,9 +123,9 @@ static int amdxdna_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto failed_tdr_fini;
 	}
 
-	ret = amdxdna_dpt_init(xdna);
-	if (ret)
-		XDNA_WARN(xdna, "Failed to enable firmware debug/profile/trace: %d", ret);
+	//ret = amdxdna_dpt_init(xdna);
+	//if (ret)
+	//	XDNA_WARN(xdna, "Failed to enable firmware debug/profile/trace: %d", ret);
 
 	/* Debug fs needs to go after register DRM dev */
 	if (xdna->dev_info->ops->debugfs)
@@ -152,7 +152,7 @@ static void amdxdna_remove(struct pci_dev *pdev)
 	struct amdxdna_dev *xdna = pci_get_drvdata(pdev);
 	struct amdxdna_client *client;
 
-	amdxdna_dpt_fini(xdna);
+	//amdxdna_dpt_fini(xdna);
 	destroy_workqueue(xdna->notifier_wq);
 	if (xdna->dev_info->ops->tdr_stop)
 		xdna->dev_info->ops->tdr_stop(xdna);

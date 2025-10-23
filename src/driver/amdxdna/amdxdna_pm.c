@@ -8,16 +8,16 @@
 #include "amdxdna_drm.h"
 #include "amdxdna_pm.h"
 
-int autosuspend_ms = 5000;
+int autosuspend_ms = 1000;
 module_param(autosuspend_ms, int, 0644);
 MODULE_PARM_DESC(autosuspend_ms, "runtime suspend delay in milliseconds. < 0: prevent it");
 
 static int amdxdna_pmops_suspend(struct device *dev)
 {
 	struct amdxdna_dev *xdna = to_xdna_dev(dev_get_drvdata(dev));
-	int ret;
+	int ret = 0;
 
-	ret = amdxdna_dpt_suspend(xdna);
+	//ret = amdxdna_dpt_suspend(xdna);
 	if (xdna->dev_info->ops->suspend)
 		xdna->dev_info->ops->suspend(xdna);
 
@@ -33,7 +33,7 @@ static int amdxdna_pmops_resume(struct device *dev)
 	if (xdna->dev_info->ops->resume)
 		ret = xdna->dev_info->ops->resume(xdna);
 
-	ret = amdxdna_dpt_resume(xdna);
+	//ret = amdxdna_dpt_resume(xdna);
 	XDNA_DBG(xdna, "Runtime resume done ret: %d", ret);
 	return ret;
 }

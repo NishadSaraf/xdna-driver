@@ -222,6 +222,7 @@ int aie2_runtime_cfg(struct amdxdna_dev_hdl *ndev,
 
 static int aie2_xdna_reset(struct amdxdna_dev_hdl *ndev)
 {
+#if 0
 	int ret;
 
 	ret = aie2_suspend_fw(ndev);
@@ -235,7 +236,7 @@ static int aie2_xdna_reset(struct amdxdna_dev_hdl *ndev)
 		XDNA_ERR(ndev->xdna, "Resume firmware failed");
 		return ret;
 	}
-
+#endif
 	return 0;
 }
 
@@ -348,7 +349,7 @@ static void aie2_hw_stop(struct amdxdna_dev *xdna)
 	aie2_smu_stop(ndev);
 	mutex_unlock(&ndev->aie2_lock);
 
-	aie2_error_async_events_free(ndev);
+	//aie2_error_async_events_free(ndev);
 	pci_clear_master(pdev);
 	pci_disable_device(pdev);
 
@@ -385,7 +386,7 @@ static int aie2_hw_start(struct amdxdna_dev *xdna)
 		goto disable_dev;
 	}
 
-	ret = aie2_psp_start(ndev->psp_hdl);
+	ret = aie2_psp_start(ndev->psp_hdl, true);
 	if (ret) {
 		XDNA_ERR(xdna, "failed to start psp, ret %d", ret);
 		goto fini_smu;
@@ -435,11 +436,11 @@ static int aie2_hw_start(struct amdxdna_dev *xdna)
 		goto pm_fini;
 	}
 
-	ret = aie2_error_async_events_alloc(ndev);
-	if (ret) {
-		XDNA_ERR(xdna, "Allocate async events failed, ret %d", ret);
-		goto pm_fini;
-	}
+	//ret = aie2_error_async_events_alloc(ndev);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "Allocate async events failed, ret %d", ret);
+	//	goto pm_fini;
+	//}
 
 	mutex_unlock(&ndev->aie2_lock);
 	ndev->dev_status = AIE2_DEV_START;
@@ -467,11 +468,167 @@ disable_dev:
 	return ret;
 }
 
+static void aie2_hw_lite_stop(struct amdxdna_dev *xdna)
+{
+	struct pci_dev *pdev = to_pci_dev(xdna->ddev.dev);
+	struct amdxdna_dev_hdl *ndev = xdna->dev_handle;
+
+	if (ndev->dev_status <= AIE2_DEV_INIT) {
+		XDNA_ERR(xdna, "device is already stopped");
+		return;
+	}
+
+	mutex_lock(&ndev->aie2_lock);
+	aie2_pm_fini(ndev);
+	aie2_mgmt_fw_fini(ndev);
+	//xdna_mailbox_stop_channel(ndev->mgmt_chann);
+
+	//xdna_mailbox_destroy_channel(ndev->mgmt_chann);
+	//ndev->mgmt_chann = NULL;
+	//if (ndev->mbox) {
+	//	xdna_mailbox_destroy(ndev->mbox);
+	//	ndev->mbox = NULL;
+	//}
+
+	//aie2_psp_stop(ndev->psp_hdl);
+	aie2_smu_stop(ndev);
+	mutex_unlock(&ndev->aie2_lock);
+
+	//aie2_error_async_events_free(ndev);
+	pci_clear_master(pdev);
+	pci_save_state(pdev);
+	pci_set_power_state(pdev, PCI_D3hot);
+	//pci_disable_device(pdev);
+
+	ndev->dev_status = AIE2_DEV_INIT;
+}
+
+static int aie2_hw_lite_start(struct amdxdna_dev *xdna)
+{
+	struct pci_dev *pdev = to_pci_dev(xdna->ddev.dev);
+	struct amdxdna_dev_hdl *ndev = xdna->dev_handle;
+//	struct xdna_mailbox_res mbox_res;
+	int ret;
+
+	if (ndev->dev_status >= AIE2_DEV_START) {
+		XDNA_INFO(xdna, "device is already started");
+		return 0;
+	}
+
+	//ret = pci_enable_device(pdev);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "failed to enable device, ret %d", ret);
+	//	return ret;
+	//}
+	pci_set_power_state(pdev, PCI_D0);
+	pci_restore_state(pdev);
+	pci_set_master(pdev);
+
+	/*
+	 * aie2_smu_start(), aie2_pm_init() and aie2_mgmt_fw_init() require
+	 * aie2_lock. One mutex_lock() and mutex_unlock() is simpler.
+	 */
+	mutex_lock(&ndev->aie2_lock);
+	ret = aie2_smu_start(ndev);
+	if (ret) {
+		XDNA_ERR(xdna, "failed to init smu, ret %d", ret);
+		goto disable_dev;
+	}
+
+	//ret = aie2_psp_start(ndev->psp_hdl, false);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "failed to start psp, ret %d", ret);
+	//	//goto fini_smu;
+	//}
+
+	//ret = aie2_get_mgmt_chann_info(ndev);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "firmware mgmt info ret %d", ret);
+	//	goto stop_psp;
+	//}
+
+	//mbox_res.ringbuf_base = ndev->sram_base;
+	//mbox_res.ringbuf_size = pci_resource_len(pdev, xdna->dev_info->sram_bar);
+	//mbox_res.mbox_base = ndev->mbox_base;
+	//mbox_res.mbox_size = MBOX_SIZE(ndev);
+	//mbox_res.name = "xdna_mailbox";
+	//ndev->mbox = xdna_mailbox_create(&pdev->dev, &mbox_res);
+	//if (!ndev->mbox) {
+	//	XDNA_ERR(xdna, "failed to create mailbox device");
+	//	ret = -ENODEV;
+	//	goto stop_psp;
+	//}
+
+	//ndev->mgmt_chann = xdna_mailbox_create_channel(ndev->mbox, &ndev->mgmt_info,
+	//					       MB_CHANNEL_MGMT);
+	//if (!ndev->mgmt_chann) {
+	//	XDNA_ERR(xdna, "failed to create management mailbox channel");
+	//	ret = -EINVAL;
+	//	goto destroy_mbox;
+	//}
+
+	ret = aie2_resume_fw(ndev);
+	if (ret) {
+		XDNA_ERR(ndev->xdna, "Resume firmware failed");
+		return ret;
+	}
+
+	ret = aie2_mgmt_fw_init(ndev);
+	if (ret) {
+		XDNA_ERR(xdna, "initial mgmt firmware failed, ret %d", ret);
+		goto destroy_mgmt_chann;
+	}
+
+	ret = aie2_pm_init(ndev);
+	if (ret) {
+		XDNA_ERR(xdna, "failed to init pm, ret %d", ret);
+		goto destroy_mgmt_chann;
+	}
+
+	ret = aie2_mgmt_fw_query(ndev);
+	if (ret) {
+		XDNA_ERR(xdna, "failed to query fw, ret %d", ret);
+		goto pm_fini;
+	}
+
+	//ret = aie2_error_async_events_alloc(ndev);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "Allocate async events failed, ret %d", ret);
+	//	goto pm_fini;
+	//}
+
+	mutex_unlock(&ndev->aie2_lock);
+	ndev->dev_status = AIE2_DEV_START;
+
+	return 0;
+
+pm_fini:
+	aie2_pm_fini(ndev);
+destroy_mgmt_chann:
+	xdna_mailbox_stop_channel(ndev->mgmt_chann);
+//	xdna_mailbox_destroy_channel(ndev->mgmt_chann);
+//	ndev->mgmt_chann = NULL;
+//destroy_mbox:
+//	xdna_mailbox_destroy(ndev->mbox);
+//	ndev->mbox = NULL;
+//stop_psp:
+	//aie2_psp_stop(ndev->psp_hdl);
+//fini_smu:
+	aie2_smu_stop(ndev);
+disable_dev:
+	mutex_unlock(&ndev->aie2_lock);
+	//pci_disable_device(pdev);
+	pci_clear_master(pdev);
+	pci_set_power_state(pdev, PCI_D3hot);
+
+	return ret;
+}
+
 static void aie2_hw_suspend(struct amdxdna_dev *xdna)
 {
 	guard(mutex)(&xdna->dev_lock);
 	aie2_rq_stop_all(&xdna->dev_handle->ctx_rq);
-	aie2_hw_stop(xdna);
+	aie2_hw_lite_stop(xdna);
 }
 
 static int aie2_hw_resume(struct amdxdna_dev *xdna)
@@ -480,7 +637,7 @@ static int aie2_hw_resume(struct amdxdna_dev *xdna)
 
 	XDNA_DBG(xdna, "firmware resuming...");
 	guard(mutex)(&xdna->dev_lock);
-	ret = aie2_hw_start(xdna);
+	ret = aie2_hw_lite_start(xdna);
 	if (ret) {
 		XDNA_ERR(xdna, "resume NPU firmware failed");
 		return ret;
