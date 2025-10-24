@@ -81,21 +81,24 @@ int npu1_set_dpm(struct amdxdna_dev_hdl *ndev, u32 dpm_level)
 
 int npu4_set_dpm(struct amdxdna_dev_hdl *ndev, u32 dpm_level)
 {
+	u32 result;
 	int ret;
 
-	ret = aie2_smu_exec(ndev, AIE2_SMU_SET_HARD_DPMLEVEL, dpm_level, NULL);
+	ret = aie2_smu_exec(ndev, AIE2_SMU_SET_HARD_DPMLEVEL, dpm_level, &result);
 	if (ret) {
 		XDNA_ERR(ndev->xdna, "Set hard dpm level %d failed, ret %d ",
 			 dpm_level, ret);
 		return ret;
 	}
+	XDNA_INFO(ndev->xdna, "SMU cmd result: 0x%x", result);
 
-	ret = aie2_smu_exec(ndev, AIE2_SMU_SET_SOFT_DPMLEVEL, dpm_level, NULL);
+	ret = aie2_smu_exec(ndev, AIE2_SMU_SET_SOFT_DPMLEVEL, dpm_level, &result);
 	if (ret) {
 		XDNA_ERR(ndev->xdna, "Set soft dpm level %d failed, ret %d",
 			 dpm_level, ret);
 		return ret;
 	}
+	XDNA_INFO(ndev->xdna, "SMU cmd result: 0x%x", result);
 
 	ndev->npuclk_freq = ndev->priv->dpm_clk_tbl[dpm_level].npuclk;
 	ndev->hclk_freq = ndev->priv->dpm_clk_tbl[dpm_level].hclk;
@@ -119,11 +122,13 @@ int aie2_smu_get_hclock_freq(struct amdxdna_dev_hdl *ndev)
 
 int aie2_smu_set_power_on(struct amdxdna_dev_hdl *ndev)
 {
+	u32 result;
 	int ret;
 
-	ret = aie2_smu_exec(ndev, AIE2_SMU_POWER_ON, 0, NULL);
+	ret = aie2_smu_exec(ndev, AIE2_SMU_POWER_ON, 0, &result);
 	if (ret)
 		return ret;
+	XDNA_INFO(ndev->xdna, "SMU cmd result: 0x%x", result);
 	ndev->power_state = SMU_POWER_ON;
 
 	return 0;

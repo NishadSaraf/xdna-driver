@@ -240,7 +240,7 @@ static int aie2_xdna_reset(struct amdxdna_dev_hdl *ndev)
 	return 0;
 }
 
-static int aie2_mgmt_fw_init(struct amdxdna_dev_hdl *ndev)
+static int aie2_mgmt_fw_init(struct amdxdna_dev_hdl *ndev, bool from_D3Cold)
 {
 	int ret;
 
@@ -248,6 +248,20 @@ static int aie2_mgmt_fw_init(struct amdxdna_dev_hdl *ndev)
 		ret = aie2_check_protocol_version(ndev);
 		if (ret) {
 			XDNA_ERR(ndev->xdna, "Check protocol version failed");
+			return ret;
+		}
+	}
+
+	if (from_D3Cold) {
+		ret = aie2_runtime_cfg(ndev, AIE2_RT_CFG_INIT_ONCE, NULL);
+		if (ret) {
+			XDNA_ERR(ndev->xdna, "Runtime config failed");
+			return ret;
+		}
+
+		ret = aie2_assign_mgmt_pasid(ndev, 0);
+		if (ret) {
+			XDNA_ERR(ndev->xdna, "Can not assign PASID");
 			return ret;
 		}
 	}
@@ -262,12 +276,6 @@ static int aie2_mgmt_fw_init(struct amdxdna_dev_hdl *ndev)
 	if (ret) {
 		XDNA_ERR(ndev->xdna, "Failed to %s fine grain preemption",
 			 disable_fine_preemption ? "disable" : "enable");
-		return ret;
-	}
-
-	ret = aie2_assign_mgmt_pasid(ndev, 0);
-	if (ret) {
-		XDNA_ERR(ndev->xdna, "Can not assign PASID");
 		return ret;
 	}
 
@@ -418,7 +426,7 @@ static int aie2_hw_start(struct amdxdna_dev *xdna)
 		goto destroy_mbox;
 	}
 
-	ret = aie2_mgmt_fw_init(ndev);
+	ret = aie2_mgmt_fw_init(ndev, true);
 	if (ret) {
 		XDNA_ERR(xdna, "initial mgmt firmware failed, ret %d", ret);
 		goto destroy_mgmt_chann;
@@ -491,7 +499,7 @@ static void aie2_hw_lite_stop(struct amdxdna_dev *xdna)
 	//}
 
 	//aie2_psp_stop(ndev->psp_hdl);
-	aie2_smu_stop(ndev);
+	//aie2_smu_stop(ndev);
 	mutex_unlock(&ndev->aie2_lock);
 
 	//aie2_error_async_events_free(ndev);
@@ -529,10 +537,16 @@ static int aie2_hw_lite_start(struct amdxdna_dev *xdna)
 	 * aie2_lock. One mutex_lock() and mutex_unlock() is simpler.
 	 */
 	mutex_lock(&ndev->aie2_lock);
-	ret = aie2_smu_start(ndev);
+	//ret = aie2_smu_start(ndev);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "failed to init smu, ret %d", ret);
+	//	goto disable_dev;
+	//}
+
+	ret = aie2_pm_init(ndev);
 	if (ret) {
-		XDNA_ERR(xdna, "failed to init smu, ret %d", ret);
-		goto disable_dev;
+		XDNA_ERR(xdna, "failed to init pm, ret %d", ret);
+		goto fini_smu;
 	}
 
 	//ret = aie2_psp_start(ndev->psp_hdl, false);
@@ -570,20 +584,20 @@ static int aie2_hw_lite_start(struct amdxdna_dev *xdna)
 	ret = aie2_resume_fw(ndev);
 	if (ret) {
 		XDNA_ERR(ndev->xdna, "Resume firmware failed");
-		return ret;
-	}
-
-	ret = aie2_mgmt_fw_init(ndev);
-	if (ret) {
-		XDNA_ERR(xdna, "initial mgmt firmware failed, ret %d", ret);
 		goto destroy_mgmt_chann;
 	}
 
-	ret = aie2_pm_init(ndev);
-	if (ret) {
-		XDNA_ERR(xdna, "failed to init pm, ret %d", ret);
-		goto destroy_mgmt_chann;
-	}
+	//ret = aie2_mgmt_fw_init(ndev, false);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "initial mgmt firmware failed, ret %d", ret);
+	//	goto destroy_mgmt_chann;
+	//}
+
+	//ret = aie2_pm_init(ndev);
+	//if (ret) {
+	//	XDNA_ERR(xdna, "failed to init pm, ret %d", ret);
+	//	goto destroy_mgmt_chann;
+	//}
 
 	ret = aie2_mgmt_fw_query(ndev);
 	if (ret) {
@@ -605,7 +619,7 @@ static int aie2_hw_lite_start(struct amdxdna_dev *xdna)
 pm_fini:
 	aie2_pm_fini(ndev);
 destroy_mgmt_chann:
-	xdna_mailbox_stop_channel(ndev->mgmt_chann);
+//	xdna_mailbox_stop_channel(ndev->mgmt_chann);
 //	xdna_mailbox_destroy_channel(ndev->mgmt_chann);
 //	ndev->mgmt_chann = NULL;
 //destroy_mbox:
@@ -613,9 +627,9 @@ destroy_mgmt_chann:
 //	ndev->mbox = NULL;
 //stop_psp:
 	//aie2_psp_stop(ndev->psp_hdl);
-//fini_smu:
+fini_smu:
 	aie2_smu_stop(ndev);
-disable_dev:
+//disable_dev:
 	mutex_unlock(&ndev->aie2_lock);
 	//pci_disable_device(pdev);
 	pci_clear_master(pdev);

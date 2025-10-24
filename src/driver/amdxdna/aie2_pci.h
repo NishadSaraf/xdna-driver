@@ -170,6 +170,7 @@ struct aie_metadata {
 enum rt_config_category {
 	AIE2_RT_CFG_INIT,
 	AIE2_RT_CFG_CLK_GATING,
+	AIE2_RT_CFG_INIT_ONCE,
 };
 
 struct rt_config {
