@@ -64,49 +64,56 @@ static int amdxdna_dpt_fetch_payload(struct amdxdna_dpt *dpt, u8 *buffer, u64 *o
 	struct amdxdna_mgmt_dma_hdl *dma_hdl;
 	size_t req_size, log_size;
 	u32 start, end;
-	u64 tail;
+	u64 tail, head;
 
 	dma_hdl = dpt->dma_hdl;
 	log_size = dma_hdl->size - SZ_4K; /* 4K size is reserved for the footer */
 
 	tail = READ_ONCE(dpt->tail);
+	head = *offset;
 
-	if (tail < *offset) {
+	if (tail < head) {
 		XDNA_ERR(xdna, "%s: invalid fetch offset: 0x%llx", dpt->name, *offset);
 		return -EINVAL;
 	}
 
-	if (tail == *offset) {
+	if (tail == head) {
 		req_size = 0;
 		goto exit;
 	}
 
-	start = *offset % log_size;
+	/* Skip reading already overwritten entries */
+	head = max(tail - log_size, head);
+
+	start = head % log_size;
 	end = tail % log_size;
 
 	/*
 	 * Start at 0 if the writer (tail) has advanced past one full buffer plus our current slot
-	 * (offset % log_size), meaning our position was overwritten
+	 * (head % log_size), meaning our position was overwritten
 	 */
-	if (tail - *offset >= log_size + start)
+	if (tail - head >= log_size + start)
 		start = 0;
 
+	/* Calculate the required buffer size and crop pointers to fit the available size */
 	if (end > start) {
 		req_size = end - start;
 		if (req_size > *size) {
-			/* Return as much data as it can fit */
-			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%lx", dpt->name, req_size);
-			end = start + req_size;
+			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%lx", dpt->name, *size);
+			end = *size - end;
+			req_size = *size;
+			tail = *offset + req_size;
 		}
 	} else {
 		req_size = log_size - start + end;
 		if (req_size > *size) {
-			/* Return as much data as it can fit */
-			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%lx", dpt->name, req_size);
-			if (start + req_size <= log_size)
-				end = start + req_size;
+			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%lx", dpt->name, *size);
+			if (start + *size <= log_size)
+				end = start + *size;
 			else
-				end = req_size - (log_size - start);
+				end = *size - (log_size - start);
+			req_size = *size;
+			tail = *offset + req_size;
 		}
 	}
 
