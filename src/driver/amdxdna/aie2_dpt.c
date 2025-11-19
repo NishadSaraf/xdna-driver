@@ -20,40 +20,77 @@ static const char * const fw_log_level_str[] = {
 
 void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
 {
-	char *end = buffer + size;
+	struct fw_log_header {
+#define AIE2_DPT_ENTRY_MAGIC_HEAD	0xCA
+		u8 magic;
+		u8 data_word_len;
+		u16 seq_num;
+		u32 reserved;
+	} *header;
+	struct fw_log_data {
+		u64 timestamp;
+		u32 format      : 1;
+		u32 reserved_1  : 7;
+		u32 level       : 3;
+		u32 reserved_11 : 5;
+		u32 appn        : 8;
+		u32 argc        : 8;
+		u32 line        : 16;
+		u32 module      : 16;
+	} *payload;
+	struct fw_log_footer {
+		u32 reserved;
+		u16 seq_num;
+		u8 data_word_len;
+#define AIE2_DPT_ENTRY_MAGIC_FOOTER	0xBA
+		u8 magic;
+	} *footer;
+	size_t bytes_read = 0;
+	char *data = buffer;
+	u16 seq_num = 0;
 
 	if (!size)
 		return;
 
-	while (buffer < end) {
-		struct fw_log_header {
-			u8 magic;
-			u8 data_word_len;
-			u16 seq_num;
-			u32 reserved;
-		} *header;
-		struct fw_log_data {
-			u64 timestamp;
-			u32 format      : 1;
-			u32 reserved_1  : 7;
-			u32 level       : 3;
-			u32 reserved_11 : 5;
-			u32 appn        : 8;
-			u32 argc        : 8;
-			u32 line        : 16;
-			u32 module      : 16;
-		} *data;
-		struct fw_log_footer {
-			u32 reserved;
-			u16 seq_num;
-			u8 data_word_len;
-			u8 magic;
-		} *footer;
+	while (size - bytes_read > sizeof(fw_log_header)) {
+		u32 increment = 4;
+		bool valid;
+
+		header = data;
+
+		if (header->magic != AIE2_DPT_ENTRY_MAGIC_HEAD) {
+			XDNA_ERR(xdna, "Potential buffer overflow or corruption!\n");
+			data += increment;
+			bytes_read += increment;
+			continue;
+		}
+
+		payload = data + sizeof(*header);
+		footer = data + header->data_word_len * sizeof(u32);
+
+		if (footer + sizeof(*footer) > buffer + size) {
+			/* Partial/Corrupted entry */
+			XDNA_ERR(xdna, "Log entry size exceeds available buffer size");
+			data += increment;
+			bytes_read += increment;
+			continue;
+		}
+
+		valid = footer->magic == AIE2_DPT_ENTRY_MAGIC_FOOTER &&
+			header->seq_num && header->seq_num == footer->seq_num;
+		if (!valid) {
+			XDNA_ERR(xdna, "Potential buffer overflow or corruption!\n");
+			data += increment;
+			bytes_read += increment;
+			continue;
+		}
+
+		if (!seq_num || (header->seq_num == seq_num + 1)) {
+			seq_num++;
+		}
 		const u32 data_size = sizeof(struct fw_log_data);
 		char appid[20];
 		u32 msg_size;
-
-		data = (struct fw_log_data *)buffer;
 
 		if (data->format != FW_LOG_FORMAT_FULL || !data->argc || data->level > 4) {
 			XDNA_ERR(xdna, "Potential buffer overflow or corruption!\n");
