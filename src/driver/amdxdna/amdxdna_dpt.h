@@ -7,6 +7,8 @@
 #define _AMDXDNA_DPT_H_
 
 #include <linux/kernel.h>
+#include <linux/refcount.h>
+#include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
 
@@ -39,9 +41,11 @@ struct amdxdna_dpt {
 	struct amdxdna_dev		*xdna;
 	struct amdxdna_mgmt_dma_hdl	*dma_hdl;
 	struct wait_queue_head		wait;
-	bool				polling;
 	struct work_struct		work;
 	struct timer_list		timer;
+	/* Protects timer_refs and timer re-arm/delete paths. */
+	spinlock_t			timer_lock;
+	refcount_t			timer_refs;
 	void			__iomem *io_base;
 	int				irq;
 	u32				msi_idx;
