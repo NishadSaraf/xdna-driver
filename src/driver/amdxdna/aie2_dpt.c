@@ -56,8 +56,8 @@ static void temp_log_printf(struct amdxdna_dev *xdna, const u8 *payload, size_t 
 	else
 		scnprintf(appid, sizeof(appid), "APP%2d", data->appn);
 
-	XDNA_INFO(xdna, "[%lld] [%s] [%s]: %s", data->timestamp, fw_log_level_str[data->level],
-			appid, (char *)(data + sizeof(struct fw_log_data)));
+	XDNA_INFO(xdna, "[%lld] [%s] [%s]: %.*s", data->timestamp, fw_log_level_str[data->level],
+			appid, (int )(size - sizeof(struct fw_log_data)), (char *)(payload + sizeof(struct fw_log_data)));
 }
 
 void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
@@ -67,7 +67,6 @@ void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
 	bool has_prev_seq = false;
 	u16 prev_seq = 0;
 
-	XDNA_INFO(xdna, "0x%llx", *((u64 *)buffer));
 	while ((size_t)(end - p) >= sizeof(struct fw_log_header)) {
 		unsigned int increment_bytes = 4; /* default scan step (min alignment) */
 		bool corrupted = true;
@@ -80,22 +79,22 @@ void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
 			size_t payload_bytes = (size_t)hdr->data_word_len * sizeof(u64);
 
 			size_t total_entry_size = sizeof(struct fw_log_header) +
-						  sizeof(struct fw_log_data) + payload_bytes +
+						  payload_bytes +
 						  sizeof(struct fw_log_footer);
 
-			XDNA_INFO(xdna, "Total size: %ld", total_entry_size);
+			XDNA_DBG(xdna, "Total size: %ld", total_entry_size);
 			/* Partial entry at end: stop to avoid overread */
 			if ((size_t)(end - p) < total_entry_size)
 				break;
 
 			const u8 *payload = p + sizeof(struct fw_log_header);
 			const struct fw_log_footer *ftr = (const struct fw_log_footer *)
-				(payload + sizeof(struct fw_log_data) + payload_bytes);
+				(payload + payload_bytes);
 			bool valid = (ftr->magic == AIE2_DPT_ENTRY_MAGIC_FOOTER) &&
 				     (seq > 0) && (seq == ftr->seq_num) &&
 				     (hdr->data_word_len == ftr->data_word_len);
 
-			XDNA_INFO(xdna, "Ftr M: 0x%x h seq: %d f seq: %d len: %d", ftr->magic,
+			XDNA_DBG(xdna, "Ftr M: 0x%x h seq: %d f seq: %d len: %d", ftr->magic,
 					seq, ftr->seq_num,
 					hdr->data_word_len);
 			if (likely(valid)) {
@@ -104,13 +103,6 @@ void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
 					prev_seq = seq;
 
 					temp_log_printf(xdna, payload, payload_bytes);
-#if 0
-					/* Dispatch to parser */
-					if (purpose == RBP_LOGGING)
-						parse_log(payload, payload_bytes);
-					else /* RBP_EVENT_TRACE */
-						parse_event(payload, payload_bytes);
-#endif
 					corrupted = false;
 					increment_bytes = (unsigned int)total_entry_size;
 				}
@@ -121,9 +113,6 @@ void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
 				XDNA_WARN(xdna, "Ring buffer overwritten/corrupted\n");
 				has_prev_seq = false;
 			}
-		} else {
-			XDNA_INFO(xdna, "Hdr M: 0x%x len: %d", hdr->magic, hdr->data_word_len);
-			break;
 		}
 
 		/* Advance by increment_bytes safely */
