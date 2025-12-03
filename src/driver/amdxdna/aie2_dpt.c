@@ -18,101 +18,119 @@ static const char * const fw_log_level_str[] = {
 	"MAX"
 };
 
+struct fw_log_header {
+#define AIE2_DPT_ENTRY_MAGIC_HEAD	0xCA
+	u8 magic;
+	u8 data_word_len;
+	u16 seq_num;
+	u32 reserved;
+} __packed;
+
+struct fw_log_data {
+	u64 timestamp;
+	u32 format      : 1;
+	u32 reserved_1  : 7;
+	u32 level       : 3;
+	u32 reserved_11 : 5;
+	u32 appn        : 8;
+	u32 argc        : 8;
+	u32 line        : 16;
+	u32 module      : 16;
+} __packed;
+
+struct fw_log_footer {
+	u32 reserved;
+	u16 seq_num;
+	u8 data_word_len;
+#define AIE2_DPT_ENTRY_MAGIC_FOOTER	0xBA
+	u8 magic;
+} __packed;
+
+static void temp_log_printf(struct amdxdna_dev *xdna, const u8 *payload, size_t size)
+{
+	struct fw_log_data *data = (struct fw_log_data *)payload;
+	char appid[20];
+
+	if (data->appn == AIE2_MGMT_APP_ID)
+		scnprintf(appid, sizeof(appid), "MGMNT");
+	else
+		scnprintf(appid, sizeof(appid), "APP%2d", data->appn);
+
+	XDNA_INFO(xdna, "[%lld] [%s] [%s]: %s", data->timestamp, fw_log_level_str[data->level],
+			appid, (char *)(data + sizeof(struct fw_log_data)));
+}
+
 void aie2_fw_log_parse(struct amdxdna_dev *xdna, char *buffer, size_t size)
 {
-	struct fw_log_header {
-#define AIE2_DPT_ENTRY_MAGIC_HEAD	0xCA
-		u8 magic;
-		u8 data_word_len;
-		u16 seq_num;
-		u32 reserved;
-	} *header;
-	struct fw_log_data {
-		u64 timestamp;
-		u32 format      : 1;
-		u32 reserved_1  : 7;
-		u32 level       : 3;
-		u32 reserved_11 : 5;
-		u32 appn        : 8;
-		u32 argc        : 8;
-		u32 line        : 16;
-		u32 module      : 16;
-	} *payload;
-	struct fw_log_footer {
-		u32 reserved;
-		u16 seq_num;
-		u8 data_word_len;
-#define AIE2_DPT_ENTRY_MAGIC_FOOTER	0xBA
-		u8 magic;
-	} *footer;
-	size_t bytes_read = 0;
-	char *data = buffer;
-	u16 seq_num = 0;
+	u8 *p = buffer;
+	u8 *end = buffer + size;
+	bool has_prev_seq = false;
+	u16 prev_seq = 0;
 
-	if (!size)
-		return;
+	XDNA_INFO(xdna, "0x%llx", *((u64 *)buffer));
+	while ((size_t)(end - p) >= sizeof(struct fw_log_header)) {
+		unsigned int increment_bytes = 4; /* default scan step (min alignment) */
+		bool corrupted = true;
 
-	while (size - bytes_read > sizeof(fw_log_header)) {
-		u32 increment = 4;
-		bool valid;
+		const struct fw_log_header *hdr = (const struct fw_log_header *)p;
 
-		header = data;
+		/* Check header magic first (fast path) */
+		if (likely(hdr->magic == AIE2_DPT_ENTRY_MAGIC_HEAD)) {
+			u16 seq = hdr->seq_num;
+			size_t payload_bytes = (size_t)hdr->data_word_len * sizeof(u64);
 
-		if (header->magic != AIE2_DPT_ENTRY_MAGIC_HEAD) {
-			XDNA_ERR(xdna, "Potential buffer overflow or corruption!\n");
-			data += increment;
-			bytes_read += increment;
-			continue;
+			size_t total_entry_size = sizeof(struct fw_log_header) +
+						  sizeof(struct fw_log_data) + payload_bytes +
+						  sizeof(struct fw_log_footer);
+
+			XDNA_INFO(xdna, "Total size: %ld", total_entry_size);
+			/* Partial entry at end: stop to avoid overread */
+			if ((size_t)(end - p) < total_entry_size)
+				break;
+
+			const u8 *payload = p + sizeof(struct fw_log_header);
+			const struct fw_log_footer *ftr = (const struct fw_log_footer *)
+				(payload + sizeof(struct fw_log_data) + payload_bytes);
+			bool valid = (ftr->magic == AIE2_DPT_ENTRY_MAGIC_FOOTER) &&
+				     (seq > 0) && (seq == ftr->seq_num) &&
+				     (hdr->data_word_len == ftr->data_word_len);
+
+			XDNA_INFO(xdna, "Ftr M: 0x%x h seq: %d f seq: %d len: %d", ftr->magic,
+					seq, ftr->seq_num,
+					hdr->data_word_len);
+			if (likely(valid)) {
+				if (likely(!has_prev_seq || (seq == (u16)(prev_seq + 1)))) {
+					has_prev_seq = true;
+					prev_seq = seq;
+
+					temp_log_printf(xdna, payload, payload_bytes);
+#if 0
+					/* Dispatch to parser */
+					if (purpose == RBP_LOGGING)
+						parse_log(payload, payload_bytes);
+					else /* RBP_EVENT_TRACE */
+						parse_event(payload, payload_bytes);
+#endif
+					corrupted = false;
+					increment_bytes = (unsigned int)total_entry_size;
+				}
+			}
+
+			if (unlikely(corrupted)) {
+				/* Consider pr_warn_ratelimited() if noisy */
+				XDNA_WARN(xdna, "Ring buffer overwritten/corrupted\n");
+				has_prev_seq = false;
+			}
+		} else {
+			XDNA_INFO(xdna, "Hdr M: 0x%x len: %d", hdr->magic, hdr->data_word_len);
+			break;
 		}
 
-		payload = data + sizeof(*header);
-		footer = data + header->data_word_len * sizeof(u32);
+		/* Advance by increment_bytes safely */
+		if (unlikely(increment_bytes == 0) || (size_t)(end - p) < increment_bytes)
+			break;
 
-		if (footer + sizeof(*footer) > buffer + size) {
-			/* Partial/Corrupted entry */
-			XDNA_ERR(xdna, "Log entry size exceeds available buffer size");
-			data += increment;
-			bytes_read += increment;
-			continue;
-		}
-
-		valid = footer->magic == AIE2_DPT_ENTRY_MAGIC_FOOTER &&
-			header->seq_num && header->seq_num == footer->seq_num;
-		if (!valid) {
-			XDNA_ERR(xdna, "Potential buffer overflow or corruption!\n");
-			data += increment;
-			bytes_read += increment;
-			continue;
-		}
-
-		if (!seq_num || (header->seq_num == seq_num + 1)) {
-			seq_num++;
-		}
-		const u32 data_size = sizeof(struct fw_log_data);
-		char appid[20];
-		u32 msg_size;
-
-		if (data->format != FW_LOG_FORMAT_FULL || !data->argc || data->level > 4) {
-			XDNA_ERR(xdna, "Potential buffer overflow or corruption!\n");
-			buffer += AMDXDNA_DPT_FW_LOG_MSG_ALIGN;
-			continue;
-		}
-
-		msg_size = (data->argc) * sizeof(u32);
-		if (msg_size + data_size > size) {
-			XDNA_ERR(xdna, "Log entry size exceeds available buffer size");
-			return;
-		}
-
-		if (data->appn == AIE2_MGMT_APP_ID)
-			scnprintf(appid, sizeof(appid), "MGMNT");
-		else
-			scnprintf(appid, sizeof(appid), "APP%2d", data->appn);
-
-		XDNA_INFO(xdna, "[%lld] [%s] [%s]: %s", data->timestamp,
-			  fw_log_level_str[data->level], appid, (char *)(buffer + data_size));
-
-		buffer += ALIGN(data_size + msg_size, AMDXDNA_DPT_FW_LOG_MSG_ALIGN);
+		p += increment_bytes;
 	}
 }
 

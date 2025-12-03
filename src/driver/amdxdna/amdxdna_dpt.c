@@ -99,7 +99,7 @@ static int amdxdna_dpt_fetch_payload(struct amdxdna_dpt *dpt, u8 *buffer, u64 *o
 	if (end > start) {
 		req_size = end - start;
 		if (req_size > *size) {
-			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%lx", dpt->name, *size);
+			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%x", dpt->name, *size);
 			end = *size - end;
 			req_size = *size;
 			tail = *offset + req_size;
@@ -107,7 +107,7 @@ static int amdxdna_dpt_fetch_payload(struct amdxdna_dpt *dpt, u8 *buffer, u64 *o
 	} else {
 		req_size = log_size - start + end;
 		if (req_size > *size) {
-			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%lx", dpt->name, *size);
+			XDNA_DBG(xdna, "%s: insufficient buffer size: 0x%x", dpt->name, *size);
 			if (start + *size <= log_size)
 				end = start + *size;
 			else
