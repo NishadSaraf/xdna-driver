@@ -8,6 +8,7 @@
 #include <linux/kthread.h>
 #include <linux/iommu.h>
 #include <linux/firmware.h>
+#include <linux/string_helpers.h>
 #include <linux/uaccess.h>
 #include <drm/drm_cache.h>
 #include "drm_local/amdxdna_accel.h"
@@ -24,6 +25,7 @@
 
 #include "aie4_msg_priv.h"
 
+#define IS_CLASSIC_DRV(pdev) ((pdev)->device == 0x17f1)
 #define AIE4_MAX_COL 128
 uint aie4_max_col = AIE4_MAX_COL;
 module_param(aie4_max_col, uint, 0600);
@@ -282,7 +284,20 @@ static int aie4_mailbox_init(struct amdxdna_dev *xdna)
 
 static int aie4_mgmt_fw_init(struct amdxdna_dev_hdl *ndev)
 {
-	/* TODO */
+	struct pci_dev *pdev = to_pci_dev(ndev->xdna->ddev.dev);
+	struct amdxdna_mgmt_dma_hdl *dma_hdl;
+	dma_addr_t dma_addr;
+
+	if (IS_CLASSIC_DRV(pdev)) {
+		dma_hdl = ndev->mpnpu_work_buffer;
+		dma_addr = amdxdna_mgmt_buff_get_dma_addr(dma_hdl);
+
+		if (!dma_addr)
+			XDNA_ERR(ndev->xdna, "Invalid DMA address: 0x%llx", dma_addr);
+
+		return aie4_attach_work_buffer(ndev, 0, dma_addr, dma_hdl->size);
+	}
+
 	return 0;
 }
 
@@ -478,13 +493,19 @@ static int aie4_partition_init(struct amdxdna_dev_hdl *ndev)
 
 static void aie4_mgmt_fw_fini(struct amdxdna_dev_hdl *ndev)
 {
+	struct pci_dev *pdev = to_pci_dev(ndev->xdna->ddev.dev);
 	int ret;
 
+	if (IS_CLASSIC_DRV(pdev))
+		aie4_detach_work_buffer(ndev);
+
 	ret = aie4_suspend_fw(ndev);
-	if (ret)
+	if (ret) {
 		XDNA_ERR(ndev->xdna, "suspend_fw failed, ret %d", ret);
-	else
-		XDNA_DBG(ndev->xdna, "npu firmware suspended");
+		return;
+	}
+
+	XDNA_DBG(ndev->xdna, "npu firmware suspended");
 }
 
 static void aie4_partition_fini(struct amdxdna_dev_hdl *ndev)
@@ -683,10 +704,32 @@ static int aie4_pcidev_init(struct amdxdna_dev_hdl *ndev)
 	if (ret)
 		goto release_fw;
 
+	if (IS_CLASSIC_DRV(pdev)) {
+		struct amdxdna_mgmt_dma_hdl *dma_hdl;
+		char print_size[32];
+
+		dma_hdl = amdxdna_mgmt_buff_alloc(xdna, AIE4_MPNPU_WORK_BUFFER_MIN_SIZE,
+						  DMA_FROM_DEVICE);
+		if (IS_ERR(dma_hdl)) {
+			XDNA_ERR(xdna, "Failed to allocate MPNPU buffer of size: 0x%x",
+				 AIE4_MPNPU_WORK_BUFFER_MIN_SIZE);
+			ret = PTR_ERR(dma_hdl);
+			goto release_fw;
+		}
+		memset(amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, 0), 0,
+		       AIE4_MPNPU_WORK_BUFFER_MIN_SIZE);
+		amdxdna_mgmt_buff_clflush(dma_hdl, 0, 0);
+		string_get_size(dma_hdl->size, 1, STRING_UNITS_2, print_size, sizeof(print_size));
+		XDNA_DBG(xdna, "Allocated %s MPNPU work buffer at 0x%llx with DMA addr: 0x%llx",
+			 print_size, (u64)amdxdna_mgmt_buff_get_cpu_addr(dma_hdl, 0),
+			 amdxdna_mgmt_buff_get_dma_addr(dma_hdl));
+		ndev->mpnpu_work_buffer = dma_hdl;
+	}
+
 	ret = aie4_hw_start(xdna);
 	if (ret) {
 		XDNA_ERR(xdna, "aie4 hw start failed, ret %d", ret);
-		goto release_fw;
+		goto free_work_buf;
 	}
 
 	mutex_lock(&ndev->aie4_lock);
@@ -701,6 +744,11 @@ hw_stop:
 	mutex_lock(&ndev->aie4_lock);
 	aie4_hw_stop(xdna);
 	mutex_unlock(&ndev->aie4_lock);
+free_work_buf:
+	if (IS_CLASSIC_DRV(pdev)) {
+		amdxdna_mgmt_buff_free(ndev->mpnpu_work_buffer);
+		ndev->mpnpu_work_buffer = NULL;
+	}
 release_fw:
 	aie4_release_firmware(ndev);
 	return ret;
@@ -1173,10 +1221,15 @@ static void aie4_iommu_fini(struct amdxdna_dev_hdl *ndev)
 static void aie4_pcidev_fini(struct amdxdna_dev_hdl *ndev)
 {
 	struct amdxdna_dev *xdna = ndev->xdna;
+	struct pci_dev *pdev = to_pci_dev(xdna->ddev.dev);
 
 	mutex_lock(&ndev->aie4_lock);
 	aie4_hw_stop(xdna);
 	mutex_unlock(&ndev->aie4_lock);
+	if (IS_CLASSIC_DRV(pdev)) {
+		amdxdna_mgmt_buff_free(ndev->mpnpu_work_buffer);
+		ndev->mpnpu_work_buffer = NULL;
+	}
 }
 
 static void aie4_pci_fini(struct amdxdna_dev *xdna)

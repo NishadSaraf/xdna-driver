@@ -14,6 +14,7 @@
 #include "amdxdna_mailbox.h"
 #include "amdxdna_error.h"
 #include "amdxdna_aie.h"
+#include "amdxdna_mgmt.h"
 
 #define AIE4_INTERVAL		20000	/* us */
 #ifdef AMDXDNA_DEVEL
@@ -113,7 +114,8 @@ struct amdxdna_dev_hdl {
 
 	int                             num_vfs;
 
-	struct async_events             *async_events;
+	struct async_events		*async_events;
+	struct amdxdna_mgmt_dma_hdl	*mpnpu_work_buffer;
 	/* Protect mgmt_chann */
 	struct mutex                    aie4_lock;
 
@@ -170,6 +172,8 @@ int aie4_start_fw_trace(struct amdxdna_dev_hdl *ndev, struct amdxdna_mgmt_dma_hd
 			size_t size, u32 categories, u32 *msi_idx, u32 *msi_address);
 int aie4_set_trace_categories(struct amdxdna_dev_hdl *ndev, u32 categories);
 int aie4_stop_fw_trace(struct amdxdna_dev_hdl *ndev);
+int aie4_attach_work_buffer(struct amdxdna_dev_hdl *ndev, u32 pasid, dma_addr_t addr, u32 size);
+int aie4_detach_work_buffer(struct amdxdna_dev_hdl *ndev);
 void aie4_reset_prepare(struct amdxdna_dev *xdna);
 int aie4_reset_done(struct amdxdna_dev *xdna);
 
