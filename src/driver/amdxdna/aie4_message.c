@@ -190,8 +190,7 @@ int aie4_query_aie_status(struct amdxdna_dev_hdl *ndev, char __user *buf,
 	req.dump_buff_addr = addr;
 	req.dump_buff_size = size;
 	// req.pasid = ; need to implement pasid
-	req.num_cols = hweight32(aie_bitmap);
-	req.aie4_bitmap = aie_bitmap;
+	req.aie4_col_bitmap = aie_bitmap;
 
 	amdxdna_mgmt_buff_clflush(dma_hdl, 0, 0);
 	ret = aie4_send_msg_wait(ndev, &msg);
