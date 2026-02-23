@@ -580,15 +580,15 @@ struct amdxdna_drm_query_firmware_version {
 };
 
 /**
- * struct amdxdna_drm_query_ve2_firmware_version - Query the git hash and version of the firmware
+ * struct amdxdna_drm_query_cert_firmware_version - Query CERT firmware version
  * @major:  Major version number
  * @minor:  Minor version number
- * @date:  Build date of the firmware
- * @git_hash:  Git commit ID used to build the firmware version
+ * @date:  Build date of the CERT firmware
+ * @git_hash:  Git commit ID used to build the CERT firmware
  */
-struct amdxdna_drm_query_ve2_firmware_version {
-	__u8 major;
-	__u8 minor;
+struct amdxdna_drm_query_cert_firmware_version {
+	__u32 major;
+	__u32 minor;
 	__u8 date[14];
 	__u8 git_hash[48];
 };
@@ -666,7 +666,7 @@ struct amdxdna_drm_get_info {
 #define	DRM_AMDXDNA_GET_FORCE_PREEMPT_STATE		11
 #define	DRM_AMDXDNA_QUERY_RESOURCE_INFO			12
 #define	DRM_AMDXDNA_GET_FRAME_BOUNDARY_PREEMPT_STATE	13
-#define	DRM_AMDXDNA_QUERY_VE2_FIRMWARE_VERSION		14
+#define	DRM_AMDXDNA_QUERY_CERT_FIRMWARE_VERSION		14
 	__u32 param; /* in */
 	__u32 buffer_size; /* in/out */
 	__u64 buffer; /* in/out */

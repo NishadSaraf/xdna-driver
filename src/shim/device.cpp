@@ -1627,6 +1627,47 @@ struct firmware_version
   }
 };
 
+struct cert_firmware_version
+{
+  using result_type = query::cert_firmware_version::result_type;
+
+  static constexpr uint16_t aie4_device_ids[] = {
+    0x17f1, 0x17f2, 0x1b0a, 0x1b0b
+  };
+
+  static bool
+  is_aie4(uint16_t device_id)
+  {
+    for (auto id : aie4_device_ids)
+      if (device_id == id)
+        return true;
+    return false;
+  }
+
+  static result_type
+  get(const xrt_core::device* device, key_type key)
+  {
+    auto pcie_id = xrt_core::device_query<query::pcie_id>(device);
+    if (!is_aie4(pcie_id.device_id))
+      return result_type{ "N/A", "N/A" };
+
+    amdxdna_drm_query_cert_firmware_version cert_ver{};
+    amdxdna_drm_get_info arg = {
+      .param = DRM_AMDXDNA_QUERY_CERT_FIRMWARE_VERSION,
+      .buffer_size = sizeof(cert_ver),
+      .buffer = reinterpret_cast<uintptr_t>(&cert_ver)
+    };
+
+    auto& pci_dev_impl = get_pcidev_impl(device);
+    pci_dev_impl.drv_ioctl(shim_xdna::drv_ioctl_cmd::get_info, &arg);
+
+    result_type output;
+    output.date = std::string(reinterpret_cast<char*>(cert_ver.date));
+    output.git_hash = std::string(reinterpret_cast<char*>(cert_ver.git_hash));
+    return output;
+  }
+};
+
 struct default_value
 {
 
@@ -1998,6 +2039,7 @@ initialize_query_table()
   emplace_func1_request<query::xrt_smi_config,                 xrt_smi_config>();
   emplace_func1_request<query::xrt_smi_lists,                  xrt_smi_lists>();
   emplace_func1_request<query::firmware_version,               firmware_version>();
+  emplace_func0_request<query::cert_firmware_version,          cert_firmware_version>();
   emplace_func1_request<query::sub_device_path,                sub_device_path>();
   emplace_func1_request<query::aie_coredump,                   aie_coredump>();
   emplace_func1_request<query::aie_read,                       aie_read>();

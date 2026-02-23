@@ -354,9 +354,9 @@ struct firmware_version
     if (fw_type != query::firmware_version::firmware_type::uc_firmware)
        throw std::runtime_error("NPU firmware query not supported in this context");
 
-    amdxdna_drm_query_ve2_firmware_version fw_version{};
+    amdxdna_drm_query_cert_firmware_version fw_version{};
     amdxdna_drm_get_info arg = {
-      .param = DRM_AMDXDNA_QUERY_VE2_FIRMWARE_VERSION,
+      .param = DRM_AMDXDNA_QUERY_CERT_FIRMWARE_VERSION,
       .buffer_size = sizeof(fw_version),
       .buffer = reinterpret_cast<uintptr_t>(&fw_version)
     };
@@ -376,7 +376,30 @@ struct firmware_version
   }
 };
 
-// Implement aie_read query
+struct cert_firmware_version
+{
+  using result_type = query::cert_firmware_version::result_type;
+
+  static result_type
+  get(const xrt_core::device* device, key_type)
+  {
+    amdxdna_drm_query_cert_firmware_version cert_ver{};
+    amdxdna_drm_get_info arg = {
+      .param = DRM_AMDXDNA_QUERY_CERT_FIRMWARE_VERSION,
+      .buffer_size = sizeof(cert_ver),
+      .buffer = reinterpret_cast<uintptr_t>(&cert_ver)
+    };
+
+    auto edev = get_edgedev(device);
+    edev->ioctl(DRM_IOCTL_AMDXDNA_GET_INFO, &arg);
+
+    result_type output;
+    output.date = std::string(reinterpret_cast<char*>(cert_ver.date));
+    output.git_hash = std::string(reinterpret_cast<char*>(cert_ver.git_hash));
+    return output;
+  }
+};
+
 struct aie_read
 {
   using result_type = std::vector<char>;
@@ -1009,6 +1032,7 @@ initialize_query_table()
   emplace_func0_request<query::xocl_errors,             xocl_errors>();
   emplace_func0_request<query::clock_freq_topology_raw, clock_topology>();
   emplace_func1_request<query::firmware_version,        firmware_version>();
+  emplace_func0_request<query::cert_firmware_version,   cert_firmware_version>();
   emplace_func1_request<query::aie_read,                aie_read>();
   emplace_func1_request<query::aie_write,               aie_write>();
   emplace_func1_request<query::aie_get_freq,            aie_get_freq>();
