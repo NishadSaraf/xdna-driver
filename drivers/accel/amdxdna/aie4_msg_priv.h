@@ -16,6 +16,9 @@ enum aie4_msg_opcode {
 	AIE4_MSG_OP_SUSPEND                          = 0x10003,
 	AIE4_MSG_OP_SET_RUNTIME_CONFIG               = 0x10007,
 	AIE4_MSG_OP_CALIBRATE_CLOCK                  = 0x10009,
+	AIE4_MSG_OP_START_FW_TRACE                   = 0x1000A,
+	AIE4_MSG_OP_STOP_FW_TRACE                    = 0x1000B,
+	AIE4_MSG_OP_SET_FW_TRACE_CATEGORIES          = 0x1000C,
 	AIE4_MSG_OP_ATTACH_WORK_BUFFER               = 0x1000D,
 	AIE4_MSG_OP_QUERY_CERT_FIRMWARE_VERSION      = 0x1000F,
 
@@ -311,6 +314,44 @@ struct aie4_msg_set_runtime_cfg_resp {
 
 struct aie4_msg_runtime_config_fw_log_level {
 	__u32 log_level;
+} __packed;
+
+enum aie4_fw_trace_destination {
+	AIE4_FW_TRACE_DESTINATION_DRAM,
+};
+
+enum aie4_fw_trace_timestamp {
+	AIE4_FW_TRACE_TIMESTAMP_NONE,
+	AIE4_FW_TRACE_TIMESTAMP_NS_OFFSET,
+};
+
+struct aie4_msg_start_fw_trace_req {
+	__u64	categories;
+	__u32	destination;
+	__u32	timestamp;
+	__u64	buff_addr;
+	__u32	buff_size;
+	__u32	reserved;
+} __packed;
+
+struct aie4_msg_start_fw_trace_resp {
+	enum aie4_msg_status status;
+} __packed;
+
+struct aie4_msg_stop_fw_trace_req {
+	__u32	reserved;
+} __packed;
+
+struct aie4_msg_stop_fw_trace_resp {
+	enum aie4_msg_status status;
+} __packed;
+
+struct aie4_msg_set_fw_trace_categories_req {
+	__u64	categories;
+} __packed;
+
+struct aie4_msg_set_fw_trace_categories_resp {
+	enum aie4_msg_status status;
 } __packed;
 
 /* MSI address mask used for the AIE4 DPT (FW log / FW trace) IRQ. */
