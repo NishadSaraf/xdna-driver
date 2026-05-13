@@ -14,6 +14,7 @@ enum aie4_msg_opcode {
 	/* Classic/PF/VF common */
 	AIE4_MSG_OP_IDENTIFY                         = 0x10002,
 	AIE4_MSG_OP_SUSPEND                          = 0x10003,
+	AIE4_MSG_OP_SET_RUNTIME_CONFIG               = 0x10007,
 	AIE4_MSG_OP_CALIBRATE_CLOCK                  = 0x10009,
 	AIE4_MSG_OP_ATTACH_WORK_BUFFER               = 0x1000D,
 	AIE4_MSG_OP_QUERY_CERT_FIRMWARE_VERSION      = 0x1000F,
@@ -21,6 +22,8 @@ enum aie4_msg_opcode {
 	/* PF only */
 	AIE4_MSG_OP_CREATE_VFS                       = 0x20001,
 	AIE4_MSG_OP_DESTROY_VFS                      = 0x20002,
+	AIE4_MSG_OP_START_FW_LOG                     = 0x20004,
+	AIE4_MSG_OP_STOP_FW_LOG                      = 0x20005,
 
 	/* Classic/VF */
 	AIE4_MSG_OP_CREATE_PARTITION                 = 0x30001,
@@ -251,5 +254,66 @@ struct aie4_msg_calibrate_clock_req {
 struct aie4_msg_calibrate_clock_resp {
 	enum aie4_msg_status status;
 } __packed;
+
+/* Dynamic firmware log levels. */
+enum aie4_fw_log_level {
+	AIE4_FW_LOG_LEVEL_OFF,
+	AIE4_FW_LOG_LEVEL_ERR,
+	AIE4_FW_LOG_LEVEL_WRN,
+	AIE4_FW_LOG_LEVEL_INF,
+	AIE4_FW_LOG_LEVEL_DBG,
+	AIE4_FW_LOG_LEVEL_MAX,
+};
+
+/* Index of NPU_RUNTIME_CONFIG_DYNAMIC_LOGGING_LEVEL in the firmware ABI enum
+ * npu_msg_runtime_config_type (mpnpu-api/aie4/npu_msg_priv.h).
+ */
+#define AIE4_RUNTIME_CONFIG_FW_LOG_LEVEL 0x5
+
+struct aie4_msg_start_fw_log_req {
+	__u64	buff_addr;
+	__u32	buff_size;
+	__u32	log_level;
+	__u32	reserved;
+} __packed;
+
+struct aie4_msg_start_fw_log_resp {
+	enum aie4_msg_status status;
+} __packed;
+
+struct aie4_msg_stop_fw_log_req {
+	__u32	resv;
+} __packed;
+
+struct aie4_msg_stop_fw_log_resp {
+	enum aie4_msg_status status;
+} __packed;
+
+/* Maximum trailing per-type payload (struct npu_msg_runtime_config_*) in the
+ * firmware ABI; today the largest is npu_msg_runtime_config_event_trace_status
+ * at 12 bytes. Rounded up to leave headroom for future configs.
+ */
+#define AIE4_RUNTIME_CFG_MAX_DATA_SIZE 16
+
+/* Mirrors struct npu_msg_set_runtime_cfg_req in
+ * mpnpu-api/aie4/npu_msg_priv.h (lines 1789-1792): a 4-byte @type followed
+ * immediately on the wire by the per-type payload (one of the
+ * struct npu_msg_runtime_config_*). The firmware validates the total
+ * message size against the per-type struct size.
+ */
+struct aie4_msg_set_runtime_cfg_req {
+	__u32	type;
+} __packed;
+
+struct aie4_msg_set_runtime_cfg_resp {
+	enum aie4_msg_status status;
+} __packed;
+
+struct aie4_msg_runtime_config_fw_log_level {
+	__u32 log_level;
+} __packed;
+
+/* MSI address mask used for the AIE4 DPT (FW log / FW trace) IRQ. */
+#define AIE4_DPT_MSI_ADDR_MASK		GENMASK(23, 0)
 
 #endif /* _AIE4_MSG_PRIV_H_ */
