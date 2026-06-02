@@ -9,17 +9,24 @@
 #include "io_param.h"
 
 #include "core/common/device.h"
+#include "core/common/system.h"
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <regex>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
+#include <cerrno>
 #include <thread>
+#include <vector>
 #include <dirent.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 // FIXME
 #include "../../src/include/uapi/drm_local/amdxdna_accel.h"
@@ -520,6 +527,260 @@ verify_hclk(device* dev, uint32_t expected, const std::string& ctx)
             << expected << ") [OK]" << std::endl;
 }
 
+/*
+ * Runtime app-health query test helpers (NPU4 only).
+ *
+ * Multiple child processes each create their own hw context running the
+ * preemptible "good run" workload and keep it alive while the parent queries
+ * the firmware-reported app-health (ctx_pc) for every context, both without a
+ * filter (DRM_AMDXDNA_HW_CONTEXT_ALL) and per (pid, ctx_id) pair
+ * (DRM_AMDXDNA_HW_CONTEXT_BY_ID).
+ */
+/*
+ * Two child processes, each owning two hw contexts (4 contexts / 2 PIDs total).
+ *
+ * Keep the per-child submission rate throttled and bounded: hammering the NPU
+ * with several concurrent preemptible contexts in a tight, unbounded loop can
+ * saturate/deadlock the firmware. Each child also self-terminates after a
+ * bounded number of submission rounds so it can never run away even if it
+ * misses the parent's stop signal.
+ *
+ * The throttle is intentionally smaller than the original 50ms but stays
+ * conservative for the higher (4-way) context contention: each command is
+ * submitted synchronously (submit + wait), so a context never has more than
+ * one outstanding command and no backlog can build up. The 25ms gap between
+ * rounds spaces submissions out enough that the 4 contexts are rarely all
+ * executing at once, which limits the preemption save/restore churn that the
+ * earlier unthrottled (0ms) run triggered, while still keeping every context
+ * warm enough to report app-health. The bounded round count plus prompt stop
+ * keep the total stress window to a few seconds.
+ */
+constexpr int APP_HEALTH_NUM_CHILDREN = 2;
+constexpr int APP_HEALTH_CTX_PER_CHILD = 2;
+constexpr int APP_HEALTH_QUERY_RETRIES = 30;
+constexpr int APP_HEALTH_RETRY_SLEEP_MS = 100;
+constexpr int APP_HEALTH_ALL_MAX_CTX = 128;
+constexpr int APP_HEALTH_CHILD_MAX_ROUNDS = 200;   /* safety cap on child lifetime */
+constexpr int APP_HEALTH_CHILD_SUBMIT_GAP_MS = 25; /* throttle between rounds */
+constexpr int APP_HEALTH_REAP_GRACE_MS = 5000;     /* wait for children to exit after stop */
+constexpr int APP_HEALTH_REAP_POLL_MS = 20;        /* WNOHANG poll interval while reaping */
+
+struct app_health_ctx_report {
+  int64_t pid;
+  uint32_t ctx_id;
+};
+
+/*
+ * Ignore SIGPIPE for the lifetime of the scope and restore the previous
+ * disposition on exit (including exception unwinding), so this test does not
+ * leak a process-wide signal change into the rest of the shim_test binary.
+ */
+struct sigpipe_ignore_guard {
+  struct sigaction m_prev = {};
+  bool m_active = false;
+
+  sigpipe_ignore_guard()
+  {
+    struct sigaction sa = {};
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    if (::sigaction(SIGPIPE, &sa, &m_prev) == 0)
+      m_active = true;
+  }
+
+  ~sigpipe_ignore_guard()
+  {
+    if (m_active)
+      ::sigaction(SIGPIPE, &m_prev, nullptr);
+  }
+
+  sigpipe_ignore_guard(const sigpipe_ignore_guard&) = delete;
+  sigpipe_ignore_guard& operator=(const sigpipe_ignore_guard&) = delete;
+};
+
+/*
+ * Read exactly @len bytes from a blocking fd, retrying on EINTR and short
+ * reads. Throws on hard error or premature EOF (peer closed early).
+ */
+void
+read_exact(int fd, void* buf, size_t len)
+{
+  auto* p = static_cast<char*>(buf);
+  size_t got = 0;
+  while (got < len) {
+    ssize_t n = ::read(fd, p + got, len - got);
+    if (n > 0) {
+      got += static_cast<size_t>(n);
+      continue;
+    }
+    if (n == 0)
+      throw std::runtime_error("unexpected EOF reading ctx report from child (child may have died early)");
+    if (errno == EINTR)
+      continue;
+    throw std::runtime_error(std::string("read() of ctx report failed: ") + std::strerror(errno));
+  }
+}
+
+/*
+ * Write exactly @len bytes to a blocking fd, retrying on EINTR and short
+ * writes. Throws on hard error.
+ */
+void
+write_exact(int fd, const void* buf, size_t len)
+{
+  auto* p = static_cast<const char*>(buf);
+  size_t put = 0;
+  while (put < len) {
+    ssize_t n = ::write(fd, p + put, len - put);
+    if (n > 0) {
+      put += static_cast<size_t>(n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR)
+      continue;
+    throw std::runtime_error(std::string("write() of ctx report failed: ") + std::strerror(errno));
+  }
+}
+
+/* Issue GET_ARRAY for all contexts and return the reported entries. */
+std::vector<amdxdna_drm_hwctx_entry>
+query_app_health_all(device* dev)
+{
+  int fd = open_accel_fd(dev);
+  std::vector<amdxdna_drm_hwctx_entry> entries(APP_HEALTH_ALL_MAX_CTX);
+  amdxdna_drm_get_array arg = {
+    .param = DRM_AMDXDNA_HW_CONTEXT_ALL,
+    .element_size = sizeof(amdxdna_drm_hwctx_entry),
+    .num_element = static_cast<uint32_t>(entries.size()),
+    .buffer = reinterpret_cast<uintptr_t>(entries.data())
+  };
+
+  int ret = ::ioctl(fd, DRM_IOCTL_AMDXDNA_GET_ARRAY, &arg);
+  int err = errno;
+  ::close(fd);
+  if (ret == -1)
+    throw std::runtime_error(std::string("ioctl(GET_ARRAY, HW_CONTEXT_ALL) failed: ")
+                             + std::strerror(err));
+
+  /* Don't trust the kernel-returned count blindly: it must not exceed what we
+   * allocated/requested, otherwise resize() would read past the buffer. */
+  if (arg.num_element > static_cast<uint32_t>(APP_HEALTH_ALL_MAX_CTX))
+    throw std::runtime_error("HW_CONTEXT_ALL returned num_element="
+                             + std::to_string(arg.num_element) + " > requested max "
+                             + std::to_string(APP_HEALTH_ALL_MAX_CTX));
+
+  entries.resize(arg.num_element);
+  return entries;
+}
+
+/* Issue GET_ARRAY filtered by a single (pid, ctx_id) and return that entry. */
+amdxdna_drm_hwctx_entry
+query_app_health_by_id(device* dev, uint32_t ctx_id, int64_t pid)
+{
+  int fd = open_accel_fd(dev);
+  amdxdna_drm_hwctx_entry entry{};
+  entry.context_id = ctx_id;
+  entry.pid = pid;
+  amdxdna_drm_get_array arg = {
+    .param = DRM_AMDXDNA_HW_CONTEXT_BY_ID,
+    .element_size = sizeof(entry),
+    .num_element = 1,
+    .buffer = reinterpret_cast<uintptr_t>(&entry)
+  };
+
+  int ret = ::ioctl(fd, DRM_IOCTL_AMDXDNA_GET_ARRAY, &arg);
+  int err = errno;
+  ::close(fd);
+  if (ret == -1)
+    throw std::runtime_error(std::string("ioctl(GET_ARRAY, HW_CONTEXT_BY_ID) failed for ctx_id=")
+                             + std::to_string(ctx_id) + " pid=" + std::to_string(pid)
+                             + ": " + std::strerror(err));
+  if (arg.num_element != 1)
+    throw std::runtime_error("HW_CONTEXT_BY_ID returned " + std::to_string(arg.num_element)
+                             + " entries, expected exactly 1 for ctx_id=" + std::to_string(ctx_id)
+                             + " pid=" + std::to_string(pid));
+  return entry;
+}
+
+/* One persistent context plus its preemptible "good run" workload BO set. */
+struct app_health_ctx_unit {
+  std::unique_ptr<hw_ctx> ctx;
+  std::unique_ptr<elf_preempt_io_test_bo_set> boset;
+};
+
+/*
+ * Child body: open its own device, create APP_HEALTH_CTX_PER_CHILD hw contexts
+ * each running the preemptible "good run" workload (reusing hw_ctx and
+ * elf_preempt_io_test_bo_set, the same helpers TEST_preempt_elf_io builds on),
+ * report all of its (pid, ctx_id) pairs to the parent, then keep every context
+ * warm by replaying the workload via io_test_bo_set_base::run_on_ctx() until the
+ * parent closes the stop pipe (EOF).
+ */
+[[noreturn]] void
+run_app_health_child(device::id_type id, int report_fd, int stop_fd)
+{
+  static const flow_type flow = PREEMPT_PARTIAL_ELF;
+
+  try {
+    auto sdev = get_userpf_device(id);
+    auto dev = sdev.get();
+
+    std::vector<app_health_ctx_unit> units;
+    std::vector<app_health_ctx_report> reports(APP_HEALTH_CTX_PER_CHILD);
+    for (int j = 0; j < APP_HEALTH_CTX_PER_CHILD; j++) {
+      app_health_ctx_unit u;
+      u.ctx = std::make_unique<hw_ctx>(dev, "good", &flow);
+      u.boset = std::make_unique<elf_preempt_io_test_bo_set>(dev, "good", &flow);
+      u.boset->init_cmd(*u.ctx, false);
+      u.boset->sync_before_run();
+
+      reports[j].pid = static_cast<int64_t>(::getpid());
+      reports[j].ctx_id = static_cast<uint32_t>(u.ctx->get()->get_slotidx());
+      units.push_back(std::move(u));
+    }
+
+    /* Report all of this child's (pid, ctx_id) pairs (handles EINTR/partial writes). */
+    write_exact(report_fd, reports.data(), reports.size() * sizeof(app_health_ctx_report));
+    ::close(report_fd);
+
+    /* Non-blocking so we can poll for the parent's stop signal (pipe EOF). */
+    int flags = ::fcntl(stop_fd, F_GETFL, 0);
+    if (flags == -1)
+      throw std::runtime_error(std::string("fcntl(F_GETFL) on stop pipe failed: ")
+                               + std::strerror(errno));
+    if (::fcntl(stop_fd, F_SETFL, flags | O_NONBLOCK) == -1)
+      throw std::runtime_error(std::string("fcntl(F_SETFL, O_NONBLOCK) on stop pipe failed: ")
+                               + std::strerror(errno));
+
+    /*
+     * Throttled, bounded loop: replay the workload once on each context per
+     * round, then sleep. Stop as soon as the parent closes the stop pipe (EOF)
+     * and never exceed the round cap, so the child cannot run away or saturate
+     * the NPU.
+     */
+    for (int round = 0; round < APP_HEALTH_CHILD_MAX_ROUNDS; round++) {
+      char b;
+      ssize_t n = ::read(stop_fd, &b, sizeof(b));
+      if (n == 0)
+        break; /* parent closed write end -> stop */
+      if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+        throw std::runtime_error(std::string("read() on stop pipe failed: ")
+                                 + std::strerror(errno));
+      /* n > 0 (unexpected data) or a benign EAGAIN/EWOULDBLOCK/EINTR: keep going. */
+
+      for (auto& u : units)
+        u.boset->run_on_ctx(*u.ctx);
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(APP_HEALTH_CHILD_SUBMIT_GAP_MS));
+    }
+  } catch (const std::exception& ex) {
+    std::cerr << "C: app health child " << ::getpid() << " failed: " << ex.what() << std::endl;
+    _exit(EXIT_FAILURE);
+  }
+  _exit(EXIT_SUCCESS);
+}
+
 }
 
 void
@@ -670,6 +931,204 @@ TEST_io_timeout(device::id_type id, std::shared_ptr<device>& sdev, arg_type& arg
 {
   elf_io_negative_test_bo_set boset{sdev.get(), "bad_timeout"};
   boset.run();
+}
+
+/*
+ * Verify runtime app-health querying across multiple live contexts living in
+ * different processes, both without a ctx-id filter (DRM_AMDXDNA_HW_CONTEXT_ALL)
+ * and per (pid, ctx_id) pair (DRM_AMDXDNA_HW_CONTEXT_BY_ID).
+ *
+ * Layout: the parent forks APP_HEALTH_NUM_CHILDREN children, each of which
+ * creates APP_HEALTH_CTX_PER_CHILD hw contexts running the preemptible "good
+ * run" workload (the same workload exercised by TEST_preempt_elf_io, built from
+ * the hw_ctx / elf_preempt_io_test_bo_set helpers) and keeps them alive by
+ * replaying the workload in a throttled, bounded loop. The two contexts within
+ * a process get distinct context_ids, so all (pid, context_id) pairs are unique
+ * (2 PIDs x 2 contexts = 4 pairs). Each child reports all of its (pid, ctx_id)
+ * pairs over a pipe; the parent then queries firmware-reported app-health and
+ * asserts that every spawned context is observed with a matching context_id and
+ * a non-zero ctx_pc. Children are told to stop (stop-pipe EOF) and reaped on
+ * every path.
+ */
+void
+TEST_app_health_query_multi_proc(device::id_type id, std::shared_ptr<device>& sdev, arg_type& arg)
+{
+  /* Can't fork with an opened device; each process opens its own. */
+  sdev.reset();
+
+  /* Ignore SIGPIPE only for the duration of this test (restored on all paths). */
+  sigpipe_ignore_guard sigpipe_guard;
+
+  /*
+   * State shared with cleanup_and_reap(). Declared before the try so that a
+   * failure during pipe/fork setup is also covered by the cleanup path: any
+   * opened pipes are closed, stop is signalled, and already-forked children
+   * are reaped.
+   */
+  int report_pipe[2] = {-1, -1};
+  std::vector<int> stop_w(APP_HEALTH_NUM_CHILDREN, -1);
+  std::vector<pid_t> children;
+
+  auto cleanup_and_reap = [&]() -> bool {
+    /* Close pipe fds; closing the stop write ends signals children (EOF). */
+    for (int& fd : report_pipe) {
+      if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
+      }
+    }
+    for (int& fd : stop_w) {
+      if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
+      }
+    }
+
+    /*
+     * Bounded reap: poll with WNOHANG until a deadline, then SIGKILL any
+     * straggler and reap it, so a wedged child can never hang the suite.
+     */
+    bool ok = true;
+    std::vector<pid_t> pending(children.begin(), children.end());
+    auto deadline = std::chrono::steady_clock::now()
+                    + std::chrono::milliseconds(APP_HEALTH_REAP_GRACE_MS);
+    while (!pending.empty() && std::chrono::steady_clock::now() < deadline) {
+      for (auto it = pending.begin(); it != pending.end();) {
+        int status = 0;
+        pid_t r = ::waitpid(*it, &status, WNOHANG);
+        if (r == 0) { /* still running -> keep polling */
+          ++it;
+          continue;
+        }
+        if (r < 0) {
+          if (errno == EINTR) { /* interrupted, child not reaped -> retry */
+            continue;
+          }
+          /* ESRCH: already gone; any other errno: unexpected -> stop tracking. */
+          if (errno != ESRCH) {
+            std::cerr << "C: waitpid(" << *it << ") failed: " << std::strerror(errno) << std::endl;
+            ok = false;
+          }
+          it = pending.erase(it);
+          continue;
+        }
+        /* r > 0: reaped */
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS)
+          ok = false;
+        it = pending.erase(it);
+      }
+      if (!pending.empty())
+        std::this_thread::sleep_for(std::chrono::milliseconds(APP_HEALTH_REAP_POLL_MS));
+    }
+    for (pid_t pid : pending) { /* straggler: force-kill and reap */
+      ok = false;
+      ::kill(pid, SIGKILL);
+      int status = 0;
+      ::waitpid(pid, &status, 0);
+    }
+    return ok;
+  };
+
+  try {
+    /* Setup (inside try so cleanup_and_reap covers partial setup failures). */
+    if (::pipe(report_pipe) < 0)
+      throw std::runtime_error(std::string("failed to create report pipe: ") + std::strerror(errno));
+
+    for (int i = 0; i < APP_HEALTH_NUM_CHILDREN; i++) {
+      int stop_pipe[2] = {-1, -1};
+      if (::pipe(stop_pipe) < 0)
+        throw std::runtime_error(std::string("failed to create stop pipe: ") + std::strerror(errno));
+
+      pid_t pid = ::fork();
+      if (pid < 0) {
+        int err = errno;
+        ::close(stop_pipe[0]);
+        ::close(stop_pipe[1]);
+        throw std::runtime_error(std::string("fork failed: ") + std::strerror(err));
+      }
+
+      if (pid == 0) {
+        /* Child: drop fds it does not use, then run (never returns). */
+        ::close(report_pipe[0]);
+        ::close(stop_pipe[1]);
+        for (int fd : stop_w)
+          if (fd >= 0)
+            ::close(fd);
+        run_app_health_child(id, report_pipe[1], stop_pipe[0]);
+      }
+
+      /* Parent */
+      ::close(stop_pipe[0]);
+      stop_w[i] = stop_pipe[1];
+      children.push_back(pid);
+    }
+    ::close(report_pipe[1]); /* parent only reads reports */
+    report_pipe[1] = -1;
+
+    /* Collect every child's (pid, ctx_id) pairs (APP_HEALTH_CTX_PER_CHILD each). */
+    std::vector<app_health_ctx_report> reports;
+    for (int i = 0; i < APP_HEALTH_NUM_CHILDREN; i++) {
+      std::vector<app_health_ctx_report> block(APP_HEALTH_CTX_PER_CHILD);
+      read_exact(report_pipe[0], block.data(), block.size() * sizeof(app_health_ctx_report));
+      for (const auto& rpt : block) {
+        reports.push_back(rpt);
+        std::cout << "  child reported pid=" << rpt.pid << " ctx_id=" << rpt.ctx_id << std::endl;
+      }
+    }
+
+    auto dev = get_userpf_device(id);
+
+    /* (a) No filter: every spawned context must be present and active (ctx_pc != 0). */
+    for (const auto& want : reports) {
+      bool found = false;
+      for (int attempt = 0; attempt < APP_HEALTH_QUERY_RETRIES && !found; attempt++) {
+        auto entries = query_app_health_all(dev.get());
+        for (const auto& e : entries) {
+          if (e.pid != want.pid || e.context_id != want.ctx_id)
+            continue;
+          if (e.ctx_pc != 0) {
+            found = true;
+            std::cout << "  [ALL]   pid=" << want.pid << " ctx_id=" << want.ctx_id
+                      << " ctx_pc=0x" << std::hex << e.ctx_pc << std::dec << " [OK]" << std::endl;
+          }
+          break;
+        }
+        if (!found)
+          std::this_thread::sleep_for(std::chrono::milliseconds(APP_HEALTH_RETRY_SLEEP_MS));
+      }
+      if (!found)
+        throw std::runtime_error("HW_CONTEXT_ALL: context pid=" + std::to_string(want.pid)
+          + " ctx_id=" + std::to_string(want.ctx_id)
+          + " missing or app-health (ctx_pc) never became non-zero");
+    }
+
+    /* (b) Per (pid, ctx_id): must return exactly that ctx with matching id and ctx_pc != 0. */
+    for (const auto& want : reports) {
+      bool ok = false;
+      for (int attempt = 0; attempt < APP_HEALTH_QUERY_RETRIES && !ok; attempt++) {
+        auto e = query_app_health_by_id(dev.get(), want.ctx_id, want.pid);
+        if (e.context_id != want.ctx_id)
+          throw std::runtime_error("HW_CONTEXT_BY_ID returned ctx_id=" + std::to_string(e.context_id)
+            + ", expected " + std::to_string(want.ctx_id) + " (pid=" + std::to_string(want.pid) + ")");
+        if (e.ctx_pc != 0) {
+          ok = true;
+          std::cout << "  [BY_ID] pid=" << want.pid << " ctx_id=" << want.ctx_id
+                    << " ctx_pc=0x" << std::hex << e.ctx_pc << std::dec << " [OK]" << std::endl;
+        } else {
+          std::this_thread::sleep_for(std::chrono::milliseconds(APP_HEALTH_RETRY_SLEEP_MS));
+        }
+      }
+      if (!ok)
+        throw std::runtime_error("HW_CONTEXT_BY_ID: context pid=" + std::to_string(want.pid)
+          + " ctx_id=" + std::to_string(want.ctx_id) + " app-health (ctx_pc) never became non-zero");
+    }
+  } catch (...) {
+    cleanup_and_reap();
+    throw;
+  }
+
+  if (!cleanup_and_reap())
+    throw std::runtime_error("one or more child contexts did not exit cleanly");
 }
 
 void
