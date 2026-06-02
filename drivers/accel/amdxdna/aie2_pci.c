@@ -1020,6 +1020,103 @@ static int aie2_query_ctx_status_array(struct amdxdna_client *client,
 	return 0;
 }
 
+struct aie2_ctx_status_by_id_arg {
+	struct amdxdna_hwctx_key	key;
+	struct amdxdna_drm_get_array	*array_args;
+};
+
+/* amdxdna_hwctx_match() casts the walk arg to struct amdxdna_hwctx_key. */
+static_assert(offsetof(struct aie2_ctx_status_by_id_arg, key) == 0,
+	      "key must be the first member for amdxdna_hwctx_match()");
+
+static int aie2_hwctx_by_id_cb(struct amdxdna_hwctx *hwctx, void *arg)
+{
+	struct aie2_ctx_status_by_id_arg *wa = arg;
+	struct amdxdna_dev *xdna = hwctx->client->xdna;
+
+	/*
+	 * The matched context may belong to another client, so gate access the
+	 * same way as the coredump / AIE tile-read paths: only the context
+	 * owner's Linux user or CAP_SYS_ADMIN may read it.
+	 */
+	if (!amdxdna_client_visible(hwctx->client)) {
+		XDNA_ERR(xdna, "Permission denied for context %u", wa->key.ctx_id);
+		return -EPERM;
+	}
+
+	return aie2_hwctx_status_cb(hwctx, wa->array_args);
+}
+
+static int aie2_query_ctx_status_by_id(struct amdxdna_client *client,
+				       struct amdxdna_drm_get_array *args)
+{
+	struct amdxdna_drm_hwctx_entry input = {};
+	struct amdxdna_dev *xdna = client->xdna;
+	struct amdxdna_drm_get_array array_args;
+	struct aie2_ctx_status_by_id_arg wa;
+	struct amdxdna_client *tmp_client;
+	int ret = -ENOENT;
+	size_t buf_size;
+
+	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
+
+	if (args->num_element != 1) {
+		XDNA_ERR(xdna, "Invalid num_element %u, expected 1",
+			 args->num_element);
+		return -EINVAL;
+	}
+
+	if (args->element_size > SZ_4K) {
+		XDNA_DBG(xdna, "Invalid element size %u", args->element_size);
+		return -EINVAL;
+	}
+
+	buf_size = (size_t)args->num_element * args->element_size;
+	if (buf_size < sizeof(input)) {
+		XDNA_ERR(xdna, "Insufficient buffer size: 0x%zx", buf_size);
+		return -EINVAL;
+	}
+
+	if (copy_from_user(&input, u64_to_user_ptr(args->buffer), sizeof(input))) {
+		XDNA_ERR(xdna, "Failed to copy hwctx entry from user");
+		return -EFAULT;
+	}
+
+	if (!input.context_id || !input.pid) {
+		XDNA_ERR(xdna, "Invalid context ID %u or PID %lld",
+			 input.context_id, input.pid);
+		return -EINVAL;
+	}
+
+	array_args.element_size = min_t(size_t, args->element_size,
+					sizeof(struct amdxdna_drm_hwctx_entry));
+	array_args.buffer = args->buffer;
+	array_args.num_element = 1;
+
+	wa.array_args = &array_args;
+	wa.key.ctx_id = input.context_id;
+	wa.key.pid = input.pid;
+
+	amdxdna_for_each_client(xdna, tmp_client) {
+		ret = amdxdna_hwctx_walk(tmp_client, &wa,
+					 amdxdna_hwctx_match,
+					 aie2_hwctx_by_id_cb);
+		if (ret != -ENOENT)
+			break;
+	}
+
+	if (ret == -ENOENT)
+		XDNA_DBG(xdna, "Context %u for pid %lld not found",
+			 input.context_id, input.pid);
+	if (ret)
+		return ret;
+
+	args->element_size = array_args.element_size;
+	args->num_element = 1;
+
+	return 0;
+}
+
 static int aie2_get_array(struct amdxdna_client *client,
 			  struct amdxdna_drm_get_array *args)
 {
@@ -1058,6 +1155,9 @@ static int aie2_get_array(struct amdxdna_client *client,
 	switch (args->param) {
 	case DRM_AMDXDNA_HW_CONTEXT_ALL:
 		ret = aie2_query_ctx_status_array(client, args);
+		break;
+	case DRM_AMDXDNA_HW_CONTEXT_BY_ID:
+		ret = aie2_query_ctx_status_by_id(client, args);
 		break;
 	case DRM_AMDXDNA_HW_LAST_ASYNC_ERR:
 		ret = aie2_get_array_async_error(xdna->dev_handle, args);

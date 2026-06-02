@@ -802,6 +802,7 @@ struct amdxdna_drm_get_dpt_state {
  * Supported params in struct amdxdna_drm_get_array
  */
 #define DRM_AMDXDNA_HW_CONTEXT_ALL	0
+#define DRM_AMDXDNA_HW_CONTEXT_BY_ID	1
 #define DRM_AMDXDNA_HW_LAST_ASYNC_ERR	2
 #define DRM_AMDXDNA_FW_LOG		3
 #define DRM_AMDXDNA_FW_TRACE		4
@@ -822,6 +823,18 @@ struct amdxdna_drm_get_array {
 	 *
 	 * %DRM_AMDXDNA_HW_CONTEXT_ALL:
 	 * Returns all created hardware contexts.
+	 *
+	 * %DRM_AMDXDNA_HW_CONTEXT_BY_ID:
+	 * Returns a single hardware context selected by (pid, context_id).
+	 * num_element must be 1. The first sizeof(struct
+	 * amdxdna_drm_hwctx_entry) bytes of buffer carry the request
+	 * (context_id + pid); on success the driver overwrites that entry
+	 * with the matching context. Both fields must be set: context_id
+	 * must be non-zero (0 is the reserved invalid context handle) and
+	 * pid must be non-zero, otherwise -EINVAL is returned. Returns
+	 * -ENOENT if no such context exists. Access: any process running as
+	 * the same Linux user as the context creator may query that context;
+	 * CAP_SYS_ADMIN may query any context, otherwise -EPERM.
 	 *
 	 * %DRM_AMDXDNA_HW_LAST_ASYNC_ERR:
 	 * Returns last async error.
