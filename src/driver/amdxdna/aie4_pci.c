@@ -1995,7 +1995,7 @@ static int aie4_get_force_preempt_state(struct amdxdna_client *client,
 static int aie4_query_resource_info(struct amdxdna_client *client,
 				    struct amdxdna_drm_get_info *args)
 {
-	struct amdxdna_drm_get_resource_info res_info;
+	struct amdxdna_drm_get_resource_info res_info = {};
 	const struct amdxdna_dev_priv *priv;
 	struct amdxdna_dev_hdl *ndev;
 	struct amdxdna_dev *xdna;
@@ -2015,6 +2015,7 @@ static int aie4_query_resource_info(struct amdxdna_client *client,
 	res_info.npu_tops_curr = ndev->curr_tops;
 	res_info.npu_task_max = ndev->total_col;
 	res_info.npu_task_curr = ndev->hwctx_cnt;
+	res_info.npu_curr_clk_max = priv->dpm_clk_tbl[ndev->dpm_level].hclk;
 
 	min = min(args->buffer_size, sizeof(res_info));
 	if (copy_to_user(u64_to_user_ptr(args->buffer), &res_info, min))

@@ -31,6 +31,7 @@ enum aie4_msg_opcode {
 	AIE4_MSG_OP_POWER_OVERRIDE                   = 0x3000B,
 	AIE4_MSG_OP_AIE_RW_ACCESS                    = 0x3000E,
 	AIE4_MSG_OP_AIE_COREDUMP                     = 0x30010,
+	AIE4_MSG_OP_GET_CURRENT_DPM_LEVEL            = 0x30013,
 
 	/* System control */
 	AIE4_MSG_OP_ATTACH_WORK_BUFFER               = 0x40001,
@@ -305,6 +306,16 @@ struct aie4_msg_calibrate_clock_req {
 
 struct aie4_msg_calibrate_clock_resp {
 	enum aie4_msg_status status;
+} __packed;
+
+struct aie4_msg_get_dpm_level_req {
+	__u32 resv;
+} __packed;
+
+struct aie4_msg_get_dpm_level_resp {
+	enum aie4_msg_status status;
+	__u32 aieclk_dpm_level;
+	__u32 npuhclk_dpm_level;
 } __packed;
 
 #endif /* _AIE4_MSG_PRIV_H_ */

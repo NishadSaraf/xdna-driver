@@ -717,15 +717,28 @@ static int aie4_query_resource_info(struct amdxdna_client *client,
 	struct amdxdna_dev_hdl *ndev;
 	struct amdxdna_dev *xdna;
 	u32 buf_sz;
+	u32 dpm_level;
+	int ret;
 
 	xdna = client->xdna;
 	ndev = xdna->dev_handle;
 	priv = ndev->priv;
 
 	aie_update_counters(ndev);
+
 	res_info.npu_clk_max = priv->dpm_clk_tbl[ndev->max_dpm_level].hclk;
 	res_info.npu_tops_max = ndev->aie.max_tops;
 	res_info.npu_tops_curr = ndev->aie.curr_tops;
+	/*
+	 * DPM is firmware managed; query the current NPUH-clock DPM level and
+	 * report its capped H-Clock. Fall back to the max level if the firmware
+	 * does not support the query or DPM is disabled.
+	 */
+	dpm_level = ndev->max_dpm_level;
+	ret = aie4_query_current_dpm_level(ndev, &dpm_level);
+	if (ret || dpm_level > ndev->max_dpm_level)
+		dpm_level = ndev->max_dpm_level;
+	res_info.npu_curr_clk_max = priv->dpm_clk_tbl[dpm_level].hclk;
 
 	buf_sz = min(args->buffer_size, sizeof(res_info));
 	if (copy_to_user(u64_to_user_ptr(args->buffer), &res_info, buf_sz))
