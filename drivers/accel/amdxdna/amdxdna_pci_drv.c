@@ -70,9 +70,11 @@ MODULE_FIRMWARE("amdnpu/1B0B_10/cert.dev.sbin");
  * 0.14: Expose firmware log GET/GET_CONFIG/SET_STATE ioctls and
  *       struct amdxdna_dpt_metadata, _set_dpt_state, _get_dpt_state
  * 0.15: Expose firmware trace GET/GET_CONFIG/SET_STATE ioctls
+ * 0.16: Report npu_curr_clk_max (H-Clock capped at current DPM level) in
+ *       struct amdxdna_drm_get_resource_info
  */
 #define AMDXDNA_DRIVER_MAJOR		0
-#define AMDXDNA_DRIVER_MINOR		15
+#define AMDXDNA_DRIVER_MINOR		16
 
 /*
  * Bind the driver base on (vendor_id, device_id) pair and later use the
