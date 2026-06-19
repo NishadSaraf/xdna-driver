@@ -31,6 +31,7 @@ enum aie4_msg_opcode {
 	AIE4_MSG_OP_POWER_OVERRIDE                   = 0x3000B,
 	AIE4_MSG_OP_AIE_RW_ACCESS                    = 0x3000E,
 	AIE4_MSG_OP_AIE_COREDUMP                     = 0x30010,
+	AIE4_MSG_OP_GET_DPM_FREQ_TABLE               = 0x30012,
 	AIE4_MSG_OP_GET_CURRENT_DPM_LEVEL            = 0x30013,
 
 	/* System control */
@@ -52,6 +53,9 @@ enum aie4_msg_context_priority_band {
 	AIE4_CONTEXT_PRIORITY_BAND_REAL_TIME,
 	AIE4_CONTEXT_PRIORITY_BAND_COUNT
 };
+
+/* Max amount of DPM levels supported by the system */
+#define AIE4_MPNPUFW_MAX_DPM_LEVEL_COUNT	10
 
 struct aie4_msg_identify_req {
 	__u32 rsvd;
@@ -306,6 +310,21 @@ struct aie4_msg_calibrate_clock_req {
 
 struct aie4_msg_calibrate_clock_resp {
 	enum aie4_msg_status status;
+} __packed;
+
+struct aie4_msg_get_dpm_freq_table_req {
+	__u32 resv;
+} __packed;
+
+struct dpm_table_t {
+	__u32 num_levels;
+	__u32 values[AIE4_MPNPUFW_MAX_DPM_LEVEL_COUNT];
+} __packed;
+
+struct aie4_msg_get_dpm_freq_table_resp {
+	enum aie4_msg_status status;
+	struct dpm_table_t aieclk_table;
+	struct dpm_table_t npuhclk_table;
 } __packed;
 
 struct aie4_msg_get_dpm_level_req {

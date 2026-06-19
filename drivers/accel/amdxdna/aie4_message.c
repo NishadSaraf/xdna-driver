@@ -85,6 +85,22 @@ int aie4_query_current_dpm_level(struct amdxdna_dev_hdl *ndev, u32 *npuh_dpm_lev
 	return 0;
 }
 
+int aie4_query_dpm_freq_table(struct amdxdna_dev_hdl *ndev,
+			      struct aie4_msg_get_dpm_freq_table_resp *table_resp)
+{
+	DECLARE_AIE_MSG(aie4_msg_get_dpm_freq_table, AIE4_MSG_OP_GET_DPM_FREQ_TABLE);
+	int ret;
+
+	ret = aie_send_mgmt_msg_wait(&ndev->aie, &msg);
+	if (ret)
+		return ret;
+
+	table_resp->aieclk_table = resp.aieclk_table;
+	table_resp->npuhclk_table = resp.npuhclk_table;
+
+	return 0;
+}
+
 int aie4_query_npu_firmware_version(struct amdxdna_dev_hdl *ndev,
 				    struct amdxdna_drm_query_firmware_version *fw_version)
 {

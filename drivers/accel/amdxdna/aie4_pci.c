@@ -290,6 +290,39 @@ static int aie4_query_fw(struct amdxdna_dev_hdl *ndev)
 	return 0;
 }
 
+static void aie4_load_dpm_clk_tbl(struct amdxdna_dev_hdl *ndev)
+{
+	struct aie4_msg_get_dpm_freq_table_resp resp = {};
+	struct amdxdna_dev *xdna = ndev->aie.xdna;
+	u32 cap = ARRAY_SIZE(ndev->dpm_clk_tbl) - 1;
+	u32 num_levels;
+	u32 i;
+	int ret;
+
+	ret = aie4_query_dpm_freq_table(ndev, &resp);
+	if (ret) {
+		XDNA_DBG(xdna, "DPM freq table query unsupported (%d), using static table", ret);
+		for (i = 0; i <= cap; i++) {
+			ndev->dpm_clk_tbl[i] = npu3_dpm_clk_table[i];
+			if (!npu3_dpm_clk_table[i].hclk)
+				break;
+		}
+		return;
+	}
+
+	num_levels = min(resp.aieclk_table.num_levels, resp.npuhclk_table.num_levels);
+	num_levels = min(num_levels, cap);
+
+	for (i = 0; i < num_levels; i++) {
+		ndev->dpm_clk_tbl[i].npuclk = resp.aieclk_table.values[i];
+		ndev->dpm_clk_tbl[i].hclk = resp.npuhclk_table.values[i];
+	}
+	ndev->dpm_clk_tbl[num_levels].npuclk = 0;
+	ndev->dpm_clk_tbl[num_levels].hclk = 0;
+
+	XDNA_DBG(xdna, "Loaded DPM freq table from firmware, %u levels", num_levels);
+}
+
 static int aie4_query_aie(struct amdxdna_dev_hdl *ndev)
 {
 	int ret;
@@ -304,6 +337,7 @@ static int aie4_query_aie(struct amdxdna_dev_hdl *ndev)
 
 	ndev->pw_mode = POWER_MODE_DEFAULT;
 	ndev->total_col = min(AIE4_TOTAL_COLUMN, ndev->aie.metadata.cols);
+	aie4_load_dpm_clk_tbl(ndev);
 	ret = ndev->priv->hw_ops->set_dpm(&ndev->aie, 0);
 	if (ret)
 		return ret;
@@ -713,7 +747,6 @@ static int aie4_query_resource_info(struct amdxdna_client *client,
 				    struct amdxdna_drm_get_info *args)
 {
 	struct amdxdna_drm_get_resource_info res_info = {};
-	const struct amdxdna_dev_priv *priv;
 	struct amdxdna_dev_hdl *ndev;
 	struct amdxdna_dev *xdna;
 	u32 buf_sz;
@@ -722,11 +755,10 @@ static int aie4_query_resource_info(struct amdxdna_client *client,
 
 	xdna = client->xdna;
 	ndev = xdna->dev_handle;
-	priv = ndev->priv;
 
 	aie_update_counters(ndev);
 
-	res_info.npu_clk_max = priv->dpm_clk_tbl[ndev->max_dpm_level].hclk;
+	res_info.npu_clk_max = ndev->dpm_clk_tbl[ndev->max_dpm_level].hclk;
 	res_info.npu_tops_max = ndev->aie.max_tops;
 	res_info.npu_tops_curr = ndev->aie.curr_tops;
 	/*
@@ -738,7 +770,7 @@ static int aie4_query_resource_info(struct amdxdna_client *client,
 	ret = aie4_query_current_dpm_level(ndev, &dpm_level);
 	if (ret || dpm_level > ndev->max_dpm_level)
 		dpm_level = ndev->max_dpm_level;
-	res_info.npu_curr_clk_max = priv->dpm_clk_tbl[dpm_level].hclk;
+	res_info.npu_curr_clk_max = ndev->dpm_clk_tbl[dpm_level].hclk;
 
 	buf_sz = min(args->buffer_size, sizeof(res_info));
 	if (copy_to_user(u64_to_user_ptr(args->buffer), &res_info, buf_sz))

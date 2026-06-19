@@ -71,7 +71,7 @@ static int npu3_set_dpm(struct aie_device *aie, u32 dpm_level)
 	struct amdxdna_dev_hdl *ndev = aie->xdna->dev_handle;
 	int max_dpm_level = 0;
 
-	while (ndev->priv->dpm_clk_tbl[max_dpm_level].hclk)
+	while (ndev->dpm_clk_tbl[max_dpm_level].hclk)
 		max_dpm_level++;
 	max_dpm_level--;
 
@@ -81,9 +81,9 @@ static int npu3_set_dpm(struct aie_device *aie, u32 dpm_level)
 		return -EINVAL;
 	}
 
-	aie->npuclk_freq = ndev->priv->dpm_clk_tbl[dpm_level].npuclk;
-	aie->hclk_freq = ndev->priv->dpm_clk_tbl[dpm_level].hclk;
-	aie->max_tops = NPU3_DPM_TOPS(ndev, ndev->priv->dpm_clk_tbl[max_dpm_level].hclk);
+	aie->npuclk_freq = ndev->dpm_clk_tbl[dpm_level].npuclk;
+	aie->hclk_freq = ndev->dpm_clk_tbl[dpm_level].hclk;
+	aie->max_tops = NPU3_DPM_TOPS(ndev, ndev->dpm_clk_tbl[max_dpm_level].hclk);
 	aie->curr_tops = NPU3_DPM_TOPS(ndev, aie->hclk_freq);
 
 	XDNA_DBG(aie->xdna, "MP-NPU clock %d, H clock %d\n",

@@ -11,6 +11,7 @@
 #include <linux/pci.h>
 
 #include "aie.h"
+#include "aie4_msg_priv.h"
 #include "amdxdna_mailbox.h"
 
 struct cert_comp {
@@ -57,6 +58,11 @@ struct amdxdna_dev_hdl {
 	u32				total_col;
 	u32				max_dpm_level;
 
+	/* Writable DPM clock table, populated from firmware at init with a
+	 * trailing {0, 0} sentinel, or from the static fallback table.
+	 */
+	struct dpm_clk_freq		dpm_clk_tbl[AIE4_MPNPUFW_MAX_DPM_LEVEL_COUNT + 1];
+
 	struct xarray                   cert_comp_xa; /* device level indexed by msix id */
 	struct mutex                    cert_comp_lock; /* protects cert_comp operations*/
 
@@ -97,6 +103,8 @@ int aie4_query_aie_metadata(struct amdxdna_dev_hdl *ndev,
 int aie4_query_aie_version(struct amdxdna_dev_hdl *ndev,
 			   struct amdxdna_drm_query_aie_version *version);
 int aie4_query_current_dpm_level(struct amdxdna_dev_hdl *ndev, u32 *npuh_dpm_level);
+int aie4_query_dpm_freq_table(struct amdxdna_dev_hdl *ndev,
+			      struct aie4_msg_get_dpm_freq_table_resp *table_resp);
 int aie4_query_npu_firmware_version(struct amdxdna_dev_hdl *ndev,
 				    struct amdxdna_drm_query_firmware_version *fw_version);
 int aie4_query_cert_firmware_version(struct amdxdna_dev_hdl *ndev,
@@ -126,6 +134,8 @@ int aie4_rw_aie_reg(struct amdxdna_hwctx *hwctx, bool is_read,
 int aie4_rw_aie_mem(struct amdxdna_hwctx *hwctx, bool is_read,
 		    u8 row, u8 col, u32 aie_addr,
 		    dma_addr_t dram_addr, u32 size);
+
+extern const struct dpm_clk_freq npu3_dpm_clk_table[];
 
 extern const struct amdxdna_dev_ops aie4_pf_ops;
 extern const struct amdxdna_dev_ops aie4_vf_ops;
