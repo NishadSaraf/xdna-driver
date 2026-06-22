@@ -52,7 +52,7 @@ amdxdna_dpt_slot(struct amdxdna_dev *xdna, enum amdxdna_dpt_kind kind)
 	return NULL;
 }
 
-static struct amdxdna_dpt *
+struct amdxdna_dpt *
 amdxdna_dpt_enter_kind(struct amdxdna_dev *xdna, enum amdxdna_dpt_kind kind,
 		       int *idx)
 {
@@ -82,6 +82,20 @@ static bool amdxdna_dpt_watch_ready(const struct amdxdna_dpt *dpt, u64 offset)
 {
 	return READ_ONCE(dpt->status) != AMDXDNA_DPT_ACTIVE ||
 	       offset != READ_ONCE(dpt->tail);
+}
+
+static int amdxdna_dpt_copy_to_kernel(void *to, const void *from, size_t n)
+{
+	memcpy(to, from, n);
+	return 0;
+}
+
+static void amdxdna_dpt_call_parse(struct amdxdna_dpt *dpt, char *buf, size_t size)
+{
+	struct aie_device *aie = dpt->aie;
+
+	if (dpt->kind == AMDXDNA_DPT_FW_LOG && aie->msg_ops.fw_log_parse)
+		aie->msg_ops.fw_log_parse(dpt->xdna, buf, size);
 }
 
 static int amdxdna_dpt_copy_to_user(void *to, const void *from, size_t n)
@@ -294,11 +308,109 @@ static void amdxdna_dpt_timer_put(struct amdxdna_dpt *dpt)
 	mutex_unlock(&dpt->timer_lock);
 }
 
+static void amdxdna_dpt_fetch_and_dump_to_dmesg(struct amdxdna_dpt *dpt)
+{
+	u32 size = dpt->size;
+	int ret;
+
+	ret = amdxdna_dpt_fetch_payload(dpt, dpt->local_buffer, &dpt->head,
+					&size, amdxdna_dpt_copy_to_kernel);
+	if (ret) {
+		XDNA_DPT_ERR(dpt, "Failed to fetch FW buffer: %d", ret);
+		return;
+	}
+
+	amdxdna_dpt_call_parse(dpt, dpt->local_buffer, size);
+}
+
+static void amdxdna_dpt_drain_pending_data(struct amdxdna_dpt *dpt)
+{
+	if (dpt->head != READ_ONCE(dpt->tail))
+		amdxdna_dpt_fetch_and_dump_to_dmesg(dpt);
+}
+
 static void amdxdna_dpt_worker(struct work_struct *w)
 {
 	struct amdxdna_dpt *dpt = container_of(w, struct amdxdna_dpt, work);
 
-	amdxdna_dpt_update_tail(dpt);
+	/*
+	 * The worker is the sole consumer of local_buffer / head once
+	 * dumping is enabled. Pair the acquire load with the store-release
+	 * in amdxdna_dpt_dump_to_dmesg() so that observing dump_to_dmesg
+	 * true guarantees local_buffer has been published.
+	 */
+	if (amdxdna_dpt_update_tail(dpt) && smp_load_acquire(&dpt->dump_to_dmesg))
+		amdxdna_dpt_fetch_and_dump_to_dmesg(dpt);
+}
+
+int amdxdna_dpt_dump_to_dmesg(struct amdxdna_dpt *dpt, bool enable)
+{
+	if (!dpt)
+		return -EINVAL;
+
+	if (dpt->dump_to_dmesg == enable)
+		return 0;
+
+	if (enable) {
+		/*
+		 * dmesg dumping only makes sense when the backend can parse the
+		 * fetched ring payload (see amdxdna_dpt_call_parse). A generation
+		 * that starts FW logging but installs no fw_log_parse hook (e.g.
+		 * aie2) would silently discard every fetched batch, so reject the
+		 * request rather than pinning a multi-megabyte buffer and running
+		 * the poll worker for nothing.
+		 */
+		if (dpt->kind != AMDXDNA_DPT_FW_LOG || !dpt->aie->msg_ops.fw_log_parse)
+			return -EOPNOTSUPP;
+
+		/*
+		 * local_buffer is only a CPU memcpy staging area for the ring
+		 * payload (amdxdna_dpt_copy_to_kernel), never a DMA target, so
+		 * a virtually contiguous allocation is sufficient and far more
+		 * robust than a multi-megabyte physically contiguous kmalloc.
+		 */
+		dpt->local_buffer = kvzalloc(dpt->size, GFP_KERNEL);
+		if (!dpt->local_buffer) {
+			XDNA_DPT_ERR(dpt, "Failed to allocate FW fetch buffer");
+			return -ENOMEM;
+		}
+		dpt->head = 0;
+
+		/*
+		 * Drain whatever is already in the ring from this (debugfs)
+		 * context while dump_to_dmesg is still false, so the worker
+		 * skips fetch_and_dump and cannot touch local_buffer / head
+		 * concurrently. Only after the initial drain do we publish the
+		 * buffer and hand ownership of local_buffer / head to the
+		 * worker, which then becomes the sole consumer.
+		 */
+		amdxdna_dpt_drain_pending_data(dpt);
+
+		/*
+		 * Publish local_buffer before dump_to_dmesg becomes visible;
+		 * pairs with the acquire load in amdxdna_dpt_worker().
+		 */
+		smp_store_release(&dpt->dump_to_dmesg, true);
+		amdxdna_dpt_timer_get(dpt);
+	} else {
+		/*
+		 * Stop dumping, then quiesce the host pipeline before freeing:
+		 * a worker queued by the IRQ handler or poll timer reads
+		 * local_buffer, so it must not run past the kvfree. timer_put
+		 * may stop the poll timer, and cancel_work_sync waits for any
+		 * in-flight worker; a worker requeued afterwards observes
+		 * dump_to_dmesg false and skips the dump.
+		 */
+		WRITE_ONCE(dpt->dump_to_dmesg, false);
+		amdxdna_dpt_timer_put(dpt);
+		cancel_work_sync(&dpt->work);
+
+		kvfree(dpt->local_buffer);
+		dpt->local_buffer = NULL;
+		dpt->head = 0;
+	}
+
+	return 0;
 }
 
 static void amdxdna_dpt_timer(struct timer_list *t)
@@ -402,6 +514,7 @@ amdxdna_dpt_publish(struct aie_device *aie, enum amdxdna_dpt_kind kind,
 		return ERR_PTR(ret);
 	}
 	dpt->buf = hdl;
+	dpt->size = to_buf_size(hdl);
 
 	memset(to_cpu_addr(hdl, 0), 0, to_buf_size(hdl));
 	drm_clflush_virt_range(to_cpu_addr(hdl, 0), to_buf_size(hdl));
@@ -628,6 +741,18 @@ static int amdxdna_dpt_fini_kind(struct aie_device *aie, enum amdxdna_dpt_kind k
 	cancel_work_sync(&dpt->work);
 
 	/*
+	 * The dmesg consumer (if enabled) held a timer ref and a local
+	 * buffer. The timer is already shut down, so release the buffer
+	 * directly rather than through amdxdna_dpt_dump_to_dmesg().
+	 */
+	if (dpt->dump_to_dmesg) {
+		dpt->dump_to_dmesg = false;
+		kvfree(dpt->local_buffer);
+		dpt->local_buffer = NULL;
+		dpt->head = 0;
+	}
+
+	/*
 	 * Release any watcher still parked. Required for the steady-state
 	 * "FW idle, no tail advance" case where amdxdna_dpt_update_tail's
 	 * conditional wake_up did not fire; otherwise the watcher would
@@ -758,6 +883,20 @@ static int amdxdna_dpt_resume_kind(struct amdxdna_dev *xdna,
 
 	WRITE_ONCE(dpt->status, AMDXDNA_DPT_ACTIVE);
 
+	/*
+	 * Suspend stopped the poll timer with timer_delete_sync but left
+	 * timer_refs untouched, so a consumer that held a reference across
+	 * suspend (e.g. dmesg dump) can no longer trigger the 0->1 arm in
+	 * amdxdna_dpt_timer_get. Re-arm it here under timer_lock now that
+	 * the device is ACTIVE again, otherwise polling stays dead and, if
+	 * the IRQ is also unavailable, FW-log consumption silently stalls.
+	 */
+	mutex_lock(&dpt->timer_lock);
+	if (refcount_read(&dpt->timer_refs))
+		mod_timer(&dpt->timer,
+			  jiffies + msecs_to_jiffies(AMDXDNA_DPT_POLL_INTERVAL_MS));
+	mutex_unlock(&dpt->timer_lock);
+
 	XDNA_DPT_DBG(dpt, "Resumed");
 	return 0;
 }
@@ -788,6 +927,44 @@ static int amdxdna_fw_log_set_level(struct aie_device *aie, u32 level)
 	WRITE_ONCE(dpt->config, level);
 	XDNA_DBG(xdna, "FW log level changed to %d", level);
 	return 0;
+}
+
+/*
+ * debugfs fw_log_level entry point. Starts logging from INACTIVE, changes
+ * the live level while ACTIVE, or stops logging when @level is NONE. Uses
+ * the xdna->dpt_aie back-pointer so the common debugfs layer need not know
+ * the generation-specific dev_handle layout.
+ */
+int amdxdna_fw_log_set_state(struct amdxdna_dev *xdna, u32 level)
+{
+	struct aie_device *aie = xdna->dpt_aie;
+	enum amdxdna_dpt_status status;
+	struct amdxdna_dpt *dpt;
+
+	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
+
+	if (level >= AMDXDNA_DPT_FW_LOG_LEVEL_MAX)
+		return -EINVAL;
+	if (!aie)
+		return -ENODEV;
+
+	dpt = rcu_dereference_protected(xdna->fw_log,
+					lockdep_is_held(&xdna->dev_lock));
+	status = dpt ? READ_ONCE(dpt->status) : AMDXDNA_DPT_INACTIVE;
+
+	switch (status) {
+	case AMDXDNA_DPT_INACTIVE:
+		if (level == AMDXDNA_DPT_FW_LOG_LEVEL_NONE)
+			return 0;
+		return amdxdna_fw_log_init(aie, level);
+	case AMDXDNA_DPT_ACTIVE:
+		if (level == AMDXDNA_DPT_FW_LOG_LEVEL_NONE)
+			return amdxdna_dpt_fini_kind(aie, AMDXDNA_DPT_FW_LOG);
+		return amdxdna_fw_log_set_level(aie, level);
+	default:
+		XDNA_ERR(xdna, "FW logging not in a stable state, retry");
+		return -EBUSY;
+	}
 }
 
 static int amdxdna_fw_trace_init(struct aie_device *aie, u32 categories)
@@ -842,6 +1019,11 @@ static int amdxdna_fw_trace_set_categories(struct aie_device *aie, u32 categorie
 int amdxdna_dpt_init(struct aie_device *aie)
 {
 	int ret;
+
+	/* Record the aie back-pointer so common code (debugfs) can reach
+	 * msg_ops without the generation-specific dev_handle layout.
+	 */
+	aie->xdna->dpt_aie = aie;
 
 	ret = amdxdna_fw_log_init(aie, AMDXDNA_DPT_FW_LOG_LEVEL_DEFAULT);
 	if (ret)

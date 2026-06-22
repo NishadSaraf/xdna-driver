@@ -5,6 +5,7 @@
 
 #include "amdxdna_cbuf.h"
 #include "amdxdna_debugfs.h"
+#include "amdxdna_dpt.h"
 
 #include <drm/drm_file.h>
 #include <linux/debugfs.h>
@@ -102,12 +103,115 @@ static int amdxdna_carveout_show(struct seq_file *m, void *unused)
  */
 AMDXDNA_DBGFS_FOPS(carveout, amdxdna_carveout_show, amdxdna_carveout_write);
 
+/*
+ * fw_log_level: enable/disable firmware logging or change verbosity.
+ * Write 0 to disable; 1..AMDXDNA_DPT_FW_LOG_LEVEL_MAX-1 to enable/relevel.
+ * Read prints the current level (0 if inactive).
+ */
+static ssize_t fw_log_level_write(struct file *file, const char __user *ptr,
+				  size_t len, loff_t *off)
+{
+	struct amdxdna_dev *xdna = file_to_xdna(file);
+	u32 level;
+	int ret;
+
+	ret = kstrtouint_from_user(ptr, len, 0, &level);
+	if (ret)
+		return ret;
+
+	guard(mutex)(&xdna->dev_lock);
+
+	ret = amdxdna_fw_log_set_state(xdna, level);
+	if (ret) {
+		XDNA_ERR(xdna, "Failed to set FW log level %u: %d", level, ret);
+		return ret;
+	}
+
+	return len;
+}
+
+static int fw_log_level_show(struct seq_file *m, void *unused)
+{
+	struct amdxdna_dev *xdna = m->private;
+	struct amdxdna_dpt *dpt;
+	u32 level = 0;
+	int idx;
+
+	dpt = amdxdna_dpt_enter_kind(xdna, AMDXDNA_DPT_FW_LOG, &idx);
+	if (dpt) {
+		level = READ_ONCE(dpt->config);
+		srcu_read_unlock(&xdna->dpt_srcu, idx);
+	}
+
+	seq_printf(m, "%u\n", level);
+	return 0;
+}
+
+AMDXDNA_DBGFS_FOPS(fw_log_level, fw_log_level_show, fw_log_level_write);
+
+/*
+ * fw_log_dump_to_dmesg: toggle kernel-side streaming of FW log entries to
+ * dmesg. Returns -EINVAL if FW logging is not ACTIVE.
+ */
+static ssize_t fw_log_dump_to_dmesg_write(struct file *file, const char __user *ptr,
+					  size_t len, loff_t *off)
+{
+	struct amdxdna_dev *xdna = file_to_xdna(file);
+	struct amdxdna_dpt *dpt;
+	bool dump;
+	int ret;
+
+	ret = kstrtobool_from_user(ptr, len, &dump);
+	if (ret)
+		return ret;
+
+	guard(mutex)(&xdna->dev_lock);
+
+	dpt = rcu_dereference_protected(xdna->fw_log,
+					lockdep_is_held(&xdna->dev_lock));
+	if (!dpt || READ_ONCE(dpt->status) != AMDXDNA_DPT_ACTIVE) {
+		XDNA_ERR(xdna, "FW logging is not active");
+		return -EINVAL;
+	}
+
+	ret = amdxdna_dpt_dump_to_dmesg(dpt, dump);
+	if (ret) {
+		XDNA_ERR(xdna, "Failed to %s FW log dmesg: %d",
+			 dump ? "enable" : "disable", ret);
+		return ret;
+	}
+
+	return len;
+}
+
+static int fw_log_dump_to_dmesg_show(struct seq_file *m, void *unused)
+{
+	struct amdxdna_dev *xdna = m->private;
+	struct amdxdna_dpt *dpt;
+	bool dump = false;
+	int idx;
+
+	dpt = amdxdna_dpt_enter_kind(xdna, AMDXDNA_DPT_FW_LOG, &idx);
+	if (dpt) {
+		dump = READ_ONCE(dpt->dump_to_dmesg);
+		srcu_read_unlock(&xdna->dpt_srcu, idx);
+	}
+
+	seq_printf(m, "%s\n", dump ? "enabled" : "disabled");
+	return 0;
+}
+
+AMDXDNA_DBGFS_FOPS(fw_log_dump_to_dmesg, fw_log_dump_to_dmesg_show,
+		   fw_log_dump_to_dmesg_write);
+
 static const struct {
 	const char *name;
 	const struct file_operations *fops;
 	umode_t mode;
 } amdxdna_dbgfs_files[] = {
 	AMDXDNA_DBGFS_FILE(carveout, 0600),
+	AMDXDNA_DBGFS_FILE(fw_log_level, 0600),
+	AMDXDNA_DBGFS_FILE(fw_log_dump_to_dmesg, 0600),
 };
 
 void amdxdna_debugfs_init(struct amdxdna_dev *xdna)
