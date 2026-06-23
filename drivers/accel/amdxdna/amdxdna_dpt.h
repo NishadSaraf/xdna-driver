@@ -136,8 +136,8 @@ struct amdxdna_dpt {
  */
 int amdxdna_dpt_init(struct aie_device *aie);
 int amdxdna_dpt_fini(struct aie_device *aie);
-int amdxdna_dpt_suspend(struct aie_device *aie);
-int amdxdna_dpt_resume(struct aie_device *aie);
+int amdxdna_dpt_suspend(struct amdxdna_dev *xdna);
+int amdxdna_dpt_resume(struct amdxdna_dev *xdna);
 
 int amdxdna_get_fw_log(struct aie_device *aie,
 		       struct amdxdna_drm_get_array *args);

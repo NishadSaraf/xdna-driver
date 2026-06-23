@@ -980,7 +980,6 @@ static int aie4_pf_suspend(struct amdxdna_dev *xdna)
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
 	/* PF suspend will cleanup fw status */
 	aie4_pf_hw_stop(ndev);
-	amdxdna_dpt_suspend(&ndev->aie);
 
 	XDNA_DBG(xdna, "pf suspend done");
 	return 0;
@@ -994,7 +993,6 @@ static int aie4_vf_suspend(struct amdxdna_dev *xdna)
 	aie4_hwctx_suspend_all(ndev);
 	/* when PF and VF both present, PF suspend will do cleanup for all VFs */
 	aie4_mailbox_fini(ndev);
-	amdxdna_dpt_suspend(&ndev->aie);
 
 	XDNA_DBG(xdna, "vf suspend done");
 	return 0;
@@ -1007,7 +1005,6 @@ static int aie4_classic_suspend(struct amdxdna_dev *xdna)
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
 	aie4_hwctx_suspend_all(ndev);
 	aie4_classic_hw_stop(ndev);
-	amdxdna_dpt_suspend(&ndev->aie);
 
 	XDNA_DBG(xdna, "classic suspend done");
 	return 0;
@@ -1049,8 +1046,6 @@ static int aie4_pf_resume(struct amdxdna_dev *xdna)
 		XDNA_DBG(xdna, "fw resumed num_vfs %d", ndev->num_vfs);
 	}
 
-	amdxdna_dpt_resume(&ndev->aie);
-
 	XDNA_DBG(xdna, "pf resume done");
 	return 0;
 hw_stop:
@@ -1086,8 +1081,6 @@ static int aie4_vf_resume(struct amdxdna_dev *xdna)
 		XDNA_ERR(xdna, "hwctx_resume failed %d", ret);
 		goto hw_clear;
 	}
-
-	amdxdna_dpt_resume(&ndev->aie);
 
 	XDNA_DBG(xdna, "vf resume done");
 	return 0;
@@ -1126,8 +1119,6 @@ static int aie4_classic_resume(struct amdxdna_dev *xdna)
 		XDNA_ERR(xdna, "hwctx_resume failed %d", ret);
 		goto hw_clear;
 	}
-
-	amdxdna_dpt_resume(&ndev->aie);
 
 	XDNA_DBG(xdna, "classic resume done");
 	return 0;

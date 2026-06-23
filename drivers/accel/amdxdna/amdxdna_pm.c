@@ -7,6 +7,7 @@
 #include <drm/drm_drv.h>
 #include <linux/pm_runtime.h>
 
+#include "amdxdna_dpt.h"
 #include "amdxdna_pm.h"
 
 #define AMDXDNA_AUTOSUSPEND_DELAY	5000 /* milliseconds */
@@ -20,6 +21,14 @@ int amdxdna_pm_suspend(struct device *dev)
 	if (xdna->dev_info->ops->suspend)
 		ret = xdna->dev_info->ops->suspend(xdna);
 
+	/*
+	 * Drain and pause firmware DPT (log/trace) after the device has
+	 * quiesced. Common to every generation/config; a safe no-op when no
+	 * DPT kind is active.
+	 */
+	if (!ret)
+		amdxdna_dpt_suspend(xdna);
+
 	XDNA_DBG(xdna, "Suspend done ret %d", ret);
 	return ret;
 }
@@ -32,6 +41,10 @@ int amdxdna_pm_resume(struct device *dev)
 	guard(mutex)(&xdna->dev_lock);
 	if (xdna->dev_info->ops->resume)
 		ret = xdna->dev_info->ops->resume(xdna);
+
+	/* Re-arm firmware DPT only after a successful device resume. */
+	if (!ret)
+		amdxdna_dpt_resume(xdna);
 
 	XDNA_DBG(xdna, "Resume done ret %d", ret);
 	return ret;
