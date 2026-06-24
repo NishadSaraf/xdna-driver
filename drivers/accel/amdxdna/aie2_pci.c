@@ -752,7 +752,7 @@ int aie2_fill_hwctx_health(struct aie_device *aie, struct amdxdna_hwctx *hwctx,
 static int aie2_query_resource_info(struct amdxdna_client *client,
 				    struct amdxdna_drm_get_info *args)
 {
-	struct amdxdna_drm_get_resource_info res_info;
+	struct amdxdna_drm_get_resource_info res_info = {};
 	const struct amdxdna_dev_priv *priv;
 	struct amdxdna_dev_hdl *ndev;
 	struct amdxdna_dev *xdna;
@@ -763,11 +763,13 @@ static int aie2_query_resource_info(struct amdxdna_client *client,
 	priv = ndev->priv;
 
 	aie_update_counters(ndev);
+
 	res_info.npu_clk_max = priv->dpm_clk_tbl[ndev->max_dpm_level].hclk;
 	res_info.npu_tops_max = ndev->aie.max_tops;
 	res_info.npu_task_max = priv->hwctx_limit;
 	res_info.npu_tops_curr = ndev->aie.curr_tops;
 	res_info.npu_task_curr = ndev->hwctx_num;
+	res_info.npu_curr_clk_max = priv->dpm_clk_tbl[ndev->dpm_level].hclk;
 
 	buf_sz = min(args->buffer_size, sizeof(res_info));
 	if (copy_to_user(u64_to_user_ptr(args->buffer), &res_info, buf_sz))

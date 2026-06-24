@@ -559,6 +559,7 @@ struct amdxdna_drm_query_firmware_version {
  * @npu_task_max: max number of tasks
  * @npu_tops_curr: current TOPs
  * @npu_task_curr: current number of tasks
+ * @npu_curr_clk_max: max H-Clock capped at the current DPM level
  */
 struct amdxdna_drm_get_resource_info {
 	__u64 npu_clk_max;
@@ -566,6 +567,7 @@ struct amdxdna_drm_get_resource_info {
 	__u64 npu_task_max;
 	__u64 npu_tops_curr;
 	__u64 npu_task_curr;
+	__u64 npu_curr_clk_max;
 };
 
 /**
