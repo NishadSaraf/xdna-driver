@@ -1427,26 +1427,12 @@ verify_result()
   }
   m_last_err_timestamp = err_timestamp;
 
-  // Verify context health report in command packet (bad_timeout.elf timeout path)
-  auto cbo = m_bo_array[IO_TEST_BO_CMD].tbo.get();
-  auto cpkt = reinterpret_cast<ert_packet *>(cbo->map());
-  if (cpkt->state != ERT_CMD_STATE_TIMEOUT)
-    return;
-
-  auto cdata = reinterpret_cast<ert_ctx_health_data_v1 *>(cpkt->data);
-  if (cdata->version != ERT_CTX_HEALTH_DATA_V1 || cdata->npu_gen != NPU_GEN_AIE4) {
-    std::cerr << "Incorrect AIE4 context health data:\n";
-    std::cerr << "\tversion: 0x" << std::hex << cdata->version
-              << " (expect " << ERT_CTX_HEALTH_DATA_V1 << ")\n";
-    std::cerr << "\tnpu_gen: 0x" << std::hex << cdata->npu_gen
-              << " (expect " << NPU_GEN_AIE4 << ")\n";
-    std::cerr << "\tctx_state: 0x" << std::hex << cdata->aie4.ctx_state << "\n";
-    std::cerr << "\tnum_uc: " << std::dec << cdata->aie4.num_uc << "\n";
-    throw std::runtime_error(std::string("Context health data version=") +
-      std::to_string(cdata->version) + " npu_gen=" + std::to_string(cdata->npu_gen) +
-      ", expect version=" + std::to_string(ERT_CTX_HEALTH_DATA_V1) +
-      " npu_gen=" + std::to_string(NPU_GEN_AIE4));
-  }
+  // Note: the aie4 context error is validated the aie2p way, via the AIE async
+  // error report above. The runlist context health report is intentionally not
+  // checked here: on npu 2.11 firmware the AXI-MM fault is correctly classified
+  // as CTX_ERR_AIE_FAILURE and the firmware does not populate a runlist health
+  // report (the older firmware only did so by misrouting the fault through the
+  // CERT-critical path).
 }
 
 elf_io_aie_debug_test_bo_set::
