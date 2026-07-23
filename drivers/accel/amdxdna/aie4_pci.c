@@ -227,6 +227,14 @@ static int aie4_mailbox_start(struct amdxdna_dev *xdna,
 		return -ENODEV;
 	}
 
+	/*
+	 * Route unsolicited firmware notifications (for example
+	 * AIE4_MSG_OP_FIRMWARE_EVENT, sent with mailbox id 0) to the aie4 async
+	 * handler instead of wedging the channel.
+	 */
+	xdna_mailbox_set_async_cb(ndev->aie.mgmt_chann, ndev,
+				  aie4_mgmt_async_msg_handler);
+
 	mgmt_mb_irq = pci_irq_vector(pdev, ndev->aie.mgmt_chan_idx);
 	if (mgmt_mb_irq < 0) {
 		XDNA_ERR(xdna, "failed to alloc irq vector, return %d", mgmt_mb_irq);

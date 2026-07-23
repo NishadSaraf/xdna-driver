@@ -47,6 +47,13 @@ enum aie4_msg_opcode {
 	AIE4_MSG_OP_START_FW_LOG                     = 0x40003,
 	AIE4_MSG_OP_STOP_FW_LOG                      = 0x40004,
 	AIE4_MSG_OP_CALIBRATE_CLOCK                  = 0x40006,
+
+	/*
+	 * Unsolicited firmware-initiated notification (mpnpu-api v6.x). The
+	 * firmware sends it with a mailbox message ID of 0; no response is
+	 * expected. See enum aie4_msg_firmware_event_id.
+	 */
+	AIE4_MSG_OP_FIRMWARE_EVENT                   = 0x10012,
 };
 
 enum aie4_msg_status {
@@ -470,6 +477,45 @@ struct aie4_async_ctx_error {
 	__u32 error_type;
 	union {
 		struct aie4_msg_app_health_report app_health_report;
+	};
+};
+
+/*
+ * AIE4_MSG_OP_FIRMWARE_EVENT
+ *
+ * Types of events which firmware can report asynchronously (unsolicited).
+ * Synced from mpnpu-api v6.x (enum npu_firmware_event_id).
+ */
+enum aie4_msg_firmware_event_id {
+	AIE4_FIRMWARE_EVENT_DRAM_LOGGING_WATERMARK,
+	AIE4_FIRMWARE_EVENT_EVENT_TRACE_WATERMARK,
+	AIE4_FIRMWARE_EVENT_DEBUG_MODE_ACTIVATED,
+	AIE4_FIRMWARE_EVENT_CONTEXT_ERROR,
+
+	AIE4_FIRMWARE_EVENT_MAX_COUNT,
+};
+
+/*
+ * AIE4_MSG_OP_FIRMWARE_EVENT payload. The firmware sends this unsolicited (with
+ * mailbox message ID 0, no response expected) to report an event. @event_id
+ * selects the anonymous union member. Synced from mpnpu-api v6.x
+ * (struct npu_msg_firmware_event).
+ */
+struct aie4_msg_firmware_event {
+	__u32 event_id;
+	union {
+		/* Generic payload for events without specific data. */
+		__u32 reserved[4];
+
+		/* Data for AIE4_FIRMWARE_EVENT_DEBUG_MODE_ACTIVATED */
+		struct {
+			__u32 ctx_id;
+		} debug_mode_activated;
+
+		/* Data for AIE4_FIRMWARE_EVENT_CONTEXT_ERROR */
+		struct {
+			__u32 ctx_id;
+		} context_error;
 	};
 };
 

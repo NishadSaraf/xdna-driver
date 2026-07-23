@@ -7,11 +7,14 @@
 #include <drm/drm_print.h>
 #include <linux/bitfield.h>
 #include <linux/bits.h>
+#include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/ktime.h>
 #include <linux/minmax.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
 #include <linux/srcu.h>
+#include <linux/workqueue.h>
 
 #include "aie.h"
 #include "aie4_msg_priv.h"
@@ -107,24 +110,37 @@ static void aie4_ctx_reset(struct aie_device *aie, u32 hw_ctx_id)
 	mutex_unlock(&xdna->dev_lock);
 }
 
-static void aie4_async_ctx_error_cache(struct aie_device *aie,
-				       struct aie4_async_ctx_error *ctx_err)
+/* Human-readable name for an aie4 async context-error type. */
+static const char *aie4_ctx_error_type_str(u32 error_type)
 {
-	enum amdxdna_error_num err_num = aie4_ctx_error_num(ctx_err->error_type);
-	struct aie4_msg_app_health_report *health = &ctx_err->app_health_report;
-	struct amdxdna_async_error *record = &aie->last_async_err;
-	struct amdxdna_dev *xdna = aie->xdna;
-	struct amdxdna_hwctx *hwctx;
+	switch (error_type) {
+	case AIE4_ASYNC_EVENT_CTX_ERR_HWSCH_FAILURE:
+		return "HWSCH_FAILURE";
+	case AIE4_ASYNC_EVENT_CTX_ERR_STOP_FAILURE:
+		return "STOP_FAILURE";
+	case AIE4_ASYNC_EVENT_CTX_ERR_AIE_FAILURE:
+		return "AIE_FAILURE";
+	case AIE4_ASYNC_EVENT_CTX_ERR_PREEMPTION_TIMEOUT:
+		return "PREEMPTION_TIMEOUT";
+	case AIE4_ASYNC_EVENT_CTX_ERR_NEW_PROCESS_FAILURE:
+		return "NEW_PROCESS_FAILURE";
+	case AIE4_ASYNC_EVENT_CTX_ERR_UC_CRITICAL_ERROR:
+		return "UC_CRITICAL_ERROR";
+	case AIE4_ASYNC_EVENT_CTX_ERR_UC_COMPLETION_TIMEOUT:
+		return "UC_COMPLETION_TIMEOUT";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+/* Dump a populated firmware app health report to the kernel log for debugging. */
+static void aie4_log_ctx_health_report(struct amdxdna_dev *xdna,
+				       struct aie4_msg_app_health_report *health,
+				       u32 ctx_status, u32 num_uc)
+{
 	struct uc_health_info *uc;
-	u32 ctx_status;
-	u32 num_uc;
-	int idx;
-	int i;
+	u32 i;
 
-	ctx_status = FIELD_GET(AIE4_APP_HEALTH_CTX_STATUS, health->ctx_num_uc);
-	num_uc = FIELD_GET(AIE4_APP_HEALTH_NUM_UC, health->ctx_num_uc);
-
-	/* Log the health report information to aid debugging. */
 	XDNA_ERR(xdna, "Context health report:");
 	XDNA_ERR(xdna, "\tVersion: %u.%u",
 		 (u32)FIELD_GET(AIE4_APP_HEALTH_MAJOR_VER, health->version),
@@ -163,6 +179,38 @@ static void aie4_async_ctx_error_cache(struct aie_device *aie,
 			 */
 		}
 	}
+}
+
+static void aie4_async_ctx_error_cache(struct aie_device *aie,
+				       struct aie4_async_ctx_error *ctx_err)
+{
+	enum amdxdna_error_num err_num = aie4_ctx_error_num(ctx_err->error_type);
+	struct aie4_msg_app_health_report *health = &ctx_err->app_health_report;
+	struct amdxdna_async_error *record = &aie->last_async_err;
+	struct amdxdna_dev *xdna = aie->xdna;
+	struct amdxdna_hwctx *hwctx;
+	u32 ctx_status;
+	u32 num_uc;
+	int idx;
+
+	ctx_status = FIELD_GET(AIE4_APP_HEALTH_CTX_STATUS, health->ctx_num_uc);
+	num_uc = FIELD_GET(AIE4_APP_HEALTH_NUM_UC, health->ctx_num_uc);
+
+	/*
+	 * The ctx-error async buffer is where the firmware is expected to attach
+	 * the app health report. It populates it only for some error types (CERT
+	 * timeout/critical, preemption timeout); for others (for example an AIE
+	 * failure) it deliberately sends the buffer with an empty report. Log the
+	 * stringified context-error header always, then either dump the populated
+	 * report or explicitly flag that the firmware omitted it. The error is
+	 * still cached below and surfaced through the async error query path.
+	 */
+	XDNA_ERR(xdna, "Context %u encountered error: %s",
+		 ctx_err->ctx_id, aie4_ctx_error_type_str(ctx_err->error_type));
+	if (health->version)
+		aie4_log_ctx_health_report(xdna, health, ctx_status, num_uc);
+	else
+		XDNA_ERR(xdna, "firmware did not include app health report in ctx-error buffer");
 
 	mutex_lock(&xdna->dev_lock);
 	record->err_code = AMDXDNA_ERROR_ENCODE(err_num, AMDXDNA_ERROR_MODULE_AIE_CORE);
@@ -235,6 +283,112 @@ bool aie4_handle_dev_event(struct aie_device *aie, u32 type, void *vaddr)
 		XDNA_WARN(xdna, "Unhandled/unknown async event type %u, skipping", type);
 		return true;
 	}
+}
+
+/* Human-readable name for an aie4 firmware-event id. */
+static const char *aie4_fw_event_id_str(u32 event_id)
+{
+	switch (event_id) {
+	case AIE4_FIRMWARE_EVENT_DRAM_LOGGING_WATERMARK:
+		return "DRAM_LOGGING_WATERMARK";
+	case AIE4_FIRMWARE_EVENT_EVENT_TRACE_WATERMARK:
+		return "EVENT_TRACE_WATERMARK";
+	case AIE4_FIRMWARE_EVENT_DEBUG_MODE_ACTIVATED:
+		return "DEBUG_MODE_ACTIVATED";
+	case AIE4_FIRMWARE_EVENT_CONTEXT_ERROR:
+		return "CONTEXT_ERROR";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+/*
+ * Deferred work for an unsolicited AIE4_MSG_OP_FIRMWARE_EVENT. Queued from the
+ * mailbox RX worker (see aie4_mgmt_async_msg_handler) so the heavy, lock-taking
+ * handling never runs in that context.
+ */
+struct aie4_firmware_event_work {
+	struct work_struct	work;
+	struct aie_device	*aie;
+	u32			event_id;
+	u32			ctx_id;
+};
+
+static void aie4_fw_event_notification(struct work_struct *work)
+{
+	struct aie4_firmware_event_work *fe =
+		container_of(work, struct aie4_firmware_event_work, work);
+	struct aie_device *aie = fe->aie;
+	struct amdxdna_dev *xdna = aie->xdna;
+
+	switch (fe->event_id) {
+	case AIE4_FIRMWARE_EVENT_CONTEXT_ERROR:
+		/*
+		 * Supplementary notification only. The context reset and the
+		 * cached context-error record (with the real error type and app
+		 * health report) are driven by the legacy async context-error
+		 * buffer path (aie4_handle_dev_event -> aie4_async_ctx_error_cache),
+		 * which the firmware always sends for every context error, so
+		 * nothing is cached here.
+		 */
+		XDNA_ERR(xdna, "firmware event %s, ctx_id=%u",
+			 aie4_fw_event_id_str(fe->event_id), fe->ctx_id);
+		break;
+	default:
+		XDNA_DBG(xdna, "firmware event %s (id=%u, ctx_id=%u) ignored",
+			 aie4_fw_event_id_str(fe->event_id), fe->event_id, fe->ctx_id);
+		break;
+	}
+
+	kfree(fe);
+}
+
+/*
+ * Handle an unsolicited firmware-initiated mailbox message. Called from the
+ * mailbox RX worker (via the channel async_cb) for messages that carry no
+ * matching outstanding request. Must be non-blocking: any real work is deferred
+ * to aie4_fw_event_notification. Always returns 0 so the mailbox channel is
+ * never wedged by a firmware notification.
+ */
+int aie4_mgmt_async_msg_handler(void *handle, u32 opcode, void __iomem *data, size_t size)
+{
+	struct amdxdna_dev_hdl *ndev = handle;
+	struct aie_device *aie = &ndev->aie;
+	struct amdxdna_dev *xdna = aie->xdna;
+	struct aie4_firmware_event_work *fe;
+	u32 event_id;
+	u32 ctx_id;
+
+	if (opcode != AIE4_MSG_OP_FIRMWARE_EVENT) {
+		XDNA_WARN(xdna, "Unhandled async mailbox opcode 0x%x", opcode);
+		return 0;
+	}
+
+	if (!data || size < sizeof(struct aie4_msg_firmware_event)) {
+		XDNA_WARN(xdna, "Malformed firmware event, size %zu", size);
+		return 0;
+	}
+
+	event_id = readl(data + offsetof(struct aie4_msg_firmware_event, event_id));
+	/* Both debug_mode_activated and context_error carry ctx_id first. */
+	ctx_id = readl(data + offsetof(struct aie4_msg_firmware_event, context_error));
+
+	fe = kzalloc_obj(*fe);
+	if (!fe)
+		return 0;
+
+	fe->aie = aie;
+	fe->event_id = event_id;
+	fe->ctx_id = ctx_id;
+	INIT_WORK(&fe->work, aie4_fw_event_notification);
+
+	if (!amdxdna_async_events_queue_work(aie, &fe->work)) {
+		XDNA_WARN(xdna, "Async workqueue not ready, dropping firmware event %u",
+			  event_id);
+		kfree(fe);
+	}
+
+	return 0;
 }
 
 /* aie4 core and mem module error events (combined table). */

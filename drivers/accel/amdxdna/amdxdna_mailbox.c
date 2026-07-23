@@ -66,6 +66,10 @@ struct mailbox_channel {
 	struct work_struct		rx_work;
 	u32				i2x_head;
 	bool				bad_state;
+
+	/* Optional handler for unsolicited/unmatched inbound messages */
+	void				*async_handle;
+	xdna_mailbox_async_cb_t		async_cb;
 };
 
 #define MSG_BODY_SZ		GENMASK(10, 0)
@@ -246,6 +250,34 @@ check_again:
 	return 0;
 }
 
+/*
+ * Handle an inbound message that has no matching outstanding request: either
+ * an unsolicited firmware-initiated notification (message ID 0, which carries
+ * no MAGIC_VAL) or a stale/unknown response. Route it to the channel's async
+ * handler by opcode and always report success so a single unexpected message
+ * can never wedge the channel (set bad_state / disable irq). The async handler
+ * is expected to be non-blocking and to defer any heavy work.
+ */
+static int
+mailbox_handle_async_msg(struct mailbox_channel *mb_chann,
+			 struct xdna_msg_header *header, void __iomem *data)
+{
+	int ret;
+
+	if (mb_chann->async_cb) {
+		ret = mb_chann->async_cb(mb_chann->async_handle, header->opcode,
+					 data, header->total_size);
+		if (ret)
+			MB_ERR(mb_chann, "Async handler for opcode 0x%x id 0x%x ret %d",
+			       header->opcode, header->id, ret);
+	} else {
+		MB_ERR(mb_chann, "Dropping unsolicited msg opcode 0x%x id 0x%x",
+		       header->opcode, header->id);
+	}
+
+	return 0;
+}
+
 static int
 mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *header,
 		 void __iomem *data)
@@ -256,15 +288,26 @@ mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *heade
 
 	msg_id = header->id;
 	if (!mailbox_validate_msgid(msg_id)) {
-		MB_ERR(mb_chann, "Bad message ID 0x%x", msg_id);
-		return -EINVAL;
+		/*
+		 * The firmware can emit unsolicited async notifications (for
+		 * example AIE4_MSG_OP_FIRMWARE_EVENT) using a mailbox message
+		 * ID of 0, which lacks MAGIC_VAL. Treat any such message as an
+		 * async notification rather than a fatal protocol error.
+		 */
+		return mailbox_handle_async_msg(mb_chann, header, data);
 	}
 
 	msg_id &= ~MAGIC_VAL_MASK;
 	mb_msg = xa_erase_irq(&mb_chann->chan_xa, msg_id);
 	if (!mb_msg) {
-		MB_ERR(mb_chann, "Cannot find msg 0x%x", msg_id);
-		return -EINVAL;
+		/*
+		 * No outstanding request matches this valid message ID. Rather
+		 * than tearing the channel down, treat it as an async/stale
+		 * message and keep going.
+		 */
+		MB_ERR(mb_chann, "No matching request for msg 0x%x opcode 0x%x, treating as async",
+		       msg_id, header->opcode);
+		return mailbox_handle_async_msg(mb_chann, header, data);
 	}
 
 	MB_DBG(mb_chann, "opcode 0x%x size %d id 0x%x",
@@ -496,6 +539,16 @@ struct mailbox_channel *xdna_mailbox_alloc_channel(struct mailbox *mb)
 free_chann:
 	kfree(mb_chann);
 	return NULL;
+}
+
+void xdna_mailbox_set_async_cb(struct mailbox_channel *mb_chann, void *async_handle,
+			       xdna_mailbox_async_cb_t async_cb)
+{
+	if (!mb_chann)
+		return;
+
+	mb_chann->async_handle = async_handle;
+	mb_chann->async_cb = async_cb;
 }
 
 void xdna_mailbox_free_channel(struct mailbox_channel *mb_chann)

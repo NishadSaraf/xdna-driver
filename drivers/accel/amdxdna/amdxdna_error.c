@@ -434,6 +434,15 @@ int amdxdna_async_events_alloc(struct aie_device *aie,
 	return 0;
 }
 
+bool amdxdna_async_events_queue_work(struct aie_device *aie, struct work_struct *work)
+{
+	if (!aie->async_events || !aie->async_events->wq)
+		return false;
+
+	queue_work(aie->async_events->wq, work);
+	return true;
+}
+
 void amdxdna_async_events_free(struct aie_device *aie)
 {
 	struct amdxdna_dev *xdna = aie->xdna;
