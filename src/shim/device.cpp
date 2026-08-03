@@ -324,12 +324,13 @@ struct preemption_events
 // rtos_telemetry query handler) and are keyed there by slot_index. On AIE2
 // the driver populates slot_index with the hardware context id from the
 // amdxdna ctx_map, which matches amdxdna_drm_hwctx_entry::context_id. On AIE4
-// there is no such mapping and slot_index is the firmware micro-controller
-// slot, which lines up with amdxdna_drm_hwctx_entry::hwctx_id instead. Callers
-// therefore select the lookup key by device generation (hwctx_id on AIE4,
-// context_id otherwise); probing context_id unconditionally could false-match
-// an unrelated AIE4 telemetry slot since context_id is allocated cyclically
-// from a small value.
+// the firmware records preemption per hardware context id, and the
+// rtos_telemetry handler emits slot_index as that id, which matches
+// amdxdna_drm_hwctx_entry::hwctx_id (the real firmware context id the driver
+// now plumbs through). Callers therefore select the lookup key by device
+// generation (hwctx_id on AIE4, context_id otherwise); probing context_id
+// unconditionally could false-match an unrelated AIE4 entry since context_id
+// is allocated cyclically from a small value.
 //
 // Reusing the rtos_telemetry query keeps the telemetry parsing in a single
 // place so both the aie-partitions report and the preemption report share the
@@ -1186,6 +1187,13 @@ struct telemetry
   static constexpr uint32_t AIE4_MAX_NUM_SUPERVISORS = 4;
   static constexpr uint32_t AIE4_TOTAL_NUM_UC = 6;
   static constexpr uint32_t AIE4_TRACE_COUNT = 16;
+  // Firmware records preemption counters per hardware context id, not per
+  // micro-controller. This must match MAX_NUM_HW_CTX_API in the firmware
+  // npu_telemetry layout (src/driver/amdxdna/aie4_msg_priv.h) exactly: the
+  // raw firmware buffer is reinterpret_cast onto aie4_fw_telemetry, so any
+  // mismatch shifts the trailing checkpoint-counter array off the firmware
+  // offset and reads unrelated buffer bytes.
+  static constexpr uint32_t AIE4_MAX_NUM_HW_CTX = 128;
   static constexpr size_t AIE4_TELEMETRY_BUFFER_SIZE = 128 * 1024;  // 128KB minimum required by firmware
 
   struct aie4_clk_deep_slp {
@@ -1219,8 +1227,8 @@ struct telemetry
     uint64_t did_dma;
     uint64_t resource_acquired[AIE4_MAX_NUM_SUPERVISORS];
     struct aie4_telemetry_opcodes opcodes;
-    uint64_t preemption_frame_boundary_counter[AIE4_TOTAL_NUM_UC];
-    uint64_t preemption_checkpoint_event_counter[AIE4_TOTAL_NUM_UC];
+    uint64_t preemption_frame_boundary_counter[AIE4_MAX_NUM_HW_CTX];
+    uint64_t preemption_checkpoint_event_counter[AIE4_MAX_NUM_HW_CTX];
   };
 
   struct amdxdna_drm_query_telemetry {
@@ -1481,7 +1489,12 @@ struct telemetry
 
       auto* fw_telemetry = reinterpret_cast<aie4_fw_telemetry*>(telemetry_buffer.data());
 
-      // One full task per supervisor slot (hypervisor + supervisors)
+      // The scheduler/context counters are recorded per supervisor slot
+      // (index 0 is the hypervisor, 1..N the supervisors), so emit one task
+      // per supervisor slot for that data. Preemption counters, however, are
+      // recorded by the firmware per hardware context id (see the per-hw-ctx
+      // loop below), so leave preemption zero on these supervisor rows to
+      // avoid mislabeling a hardware context's preemption as a supervisor's.
       for (uint32_t i = 0; i < AIE4_MAX_NUM_SUPERVISORS + 1; i++) {
         xrt_core::query::rtos_telemetry::data task;
 
@@ -1499,16 +1512,32 @@ struct telemetry
         // DTLB data not available in AIE4
         task.dtlbs = std::vector<xrt_core::query::rtos_telemetry::dtlb_data>();
         task.preemption_data.slot_index = i;
-        task.preemption_data.preemption_checkpoint_event =
-          fw_telemetry->preemption_checkpoint_event_counter[i];
-        task.preemption_data.preemption_frame_boundary_events =
-          fw_telemetry->preemption_frame_boundary_counter[i];
+        task.preemption_data.preemption_checkpoint_event = 0;
+        task.preemption_data.preemption_frame_boundary_events = 0;
 
         output.push_back(std::move(task));
       }
 
-      // Add preemption-only entries for remaining UCs
-      for (auto i = AIE4_MAX_NUM_SUPERVISORS + 1; i < AIE4_TOTAL_NUM_UC; i++) {
+      // Preemption counters are indexed by the firmware hardware context slot,
+      // which reserves slot 0 for the hypervisor and records each context's
+      // events at (host hw_context_id + 1). This was confirmed empirically: a
+      // lone context whose amdxdna_drm_hwctx_entry::hwctx_id is 0 accumulates in
+      // counter index 1, and a second context with hwctx_id 1 accumulates in
+      // counter index 2. Translate the counter index back to the host
+      // hw_context_id (idx - 1) when emitting the task so get_preemption_events()
+      // can join it onto amdxdna_drm_hwctx_entry::hwctx_id for the aie-partitions
+      // view; without this the counts either enrich to the reserved slot (never a
+      // real context) or attach to the wrong context. Start at index 1 to skip
+      // the reserved hypervisor slot. Contexts with no events are omitted; they
+      // correctly enrich to zero. Pushing these after the supervisor rows lets a
+      // real per-context value override any zero placeholder written above for a
+      // low-numbered slot.
+      for (uint32_t idx = 1; idx < AIE4_MAX_NUM_HW_CTX; idx++) {
+        const uint64_t frame = fw_telemetry->preemption_frame_boundary_counter[idx];
+        const uint64_t layer = fw_telemetry->preemption_checkpoint_event_counter[idx];
+        if (frame == 0 && layer == 0)
+          continue;
+
         xrt_core::query::rtos_telemetry::data task;
         task.context_starts = 0;
         task.schedules = 0;
@@ -1516,11 +1545,9 @@ struct telemetry
         task.dma_access = 0;
         task.resource_acquisition = 0;
         task.dtlbs = std::vector<xrt_core::query::rtos_telemetry::dtlb_data>();
-        task.preemption_data.slot_index = i;
-        task.preemption_data.preemption_checkpoint_event =
-          fw_telemetry->preemption_checkpoint_event_counter[i];
-        task.preemption_data.preemption_frame_boundary_events =
-          fw_telemetry->preemption_frame_boundary_counter[i];
+        task.preemption_data.slot_index = idx - 1;
+        task.preemption_data.preemption_checkpoint_event = layer;
+        task.preemption_data.preemption_frame_boundary_events = frame;
         output.push_back(std::move(task));
       }
       return output;
