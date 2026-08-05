@@ -4,6 +4,7 @@
 #include "hwq.h"
 #include "fence.h"
 #include "buffer.h"
+#include "prof.h"
 #include "shim_debug.h"
 #include "core/common/trace.h"
 #include <fstream>
@@ -135,6 +136,9 @@ wait_command(uint64_t seq, uint32_t timeout_ms) const
     else
       ret = 0;
   }
+  // Lifecycle profiler stage 12: shim run wait ended (wait ioctl/syncobj wait
+  // returned to the shim, just before returning up to XRT run.wait).
+  prof::stamp("shim_wait_end", seq, 0);
   return ret;
 }
 
@@ -178,6 +182,10 @@ submit_command(xrt_core::buffer_handle *cmd)
   auto boh = static_cast<cmd_buffer*>(cmd);
 
   XRT_TRACE_POINT_SCOPE1(submit_command, boh->id().handle);
+  // Lifecycle profiler stage 2: shim submission entered (first shim call from
+  // XRT after run.start). seq is unknown here; the cmd BO handle bridges to the
+  // kernel's exec_ioctl_enter marker.
+  prof::stamp("shim_submit_enter", 0, boh->id().handle);
   std::unique_lock<std::mutex> lock(m_mutex);
 
   dump_arg_bos(boh);
@@ -308,7 +316,13 @@ issue_command(const cmd_buffer *cmd_bo)
     .cmd_bo = cmd_bo->id(),
     .arg_bos = cmd_bo->get_arg_bo_ids(),
   };
+  // Lifecycle profiler stage 3 (userspace side): about to enter the exec buf
+  // ioctl. Handle links to the kernel exec_ioctl_enter marker.
+  prof::stamp("exec_ioctl_call", 0, cmd_bo->id().handle);
   m_pdev.drv_ioctl(drv_ioctl_cmd::submit_cmd, &ecmd);
+  // The ioctl returned the assigned seq: this is the handle->seq anchor that
+  // ties the userspace stamps to the seq-keyed kernel markers.
+  prof::stamp("exec_ioctl_ret", ecmd.seq, cmd_bo->id().handle);
   shim_debug("Submitted BO %d@%ld", cmd_bo->id().handle, ecmd.seq);
   return ecmd.seq;
 }
