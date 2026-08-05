@@ -438,6 +438,12 @@ TEST_xrt_umq_remote_barrier(int device_index, arg_type& arg)
   execute_batches(hwctx, runs, r_cmds);
 }
 
+/* nop test. Also reports end-to-end latency: the wall-clock time from the
+   first command submission to the last command completion, measured around
+   execute_batches, plus the average per-command latency. A nop kernel keeps
+   device compute negligible so the number reflects the submit + execute +
+   completion round-trip. Use -c to raise the sample count and -o/-r to vary
+   how many commands are outstanding / batched per runlist. */
 void
 TEST_xrt_umq_nop(int device_index, arg_type& arg)
 {
@@ -450,7 +456,17 @@ TEST_xrt_umq_nop(int device_index, arg_type& arg)
   for (unsigned i = 0; i < n; i++)
     runs.emplace_back(kernel);
 
+  auto start = std::chrono::high_resolution_clock::now();
   execute_batches(hwctx, runs, r_cmds);
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  const uint64_t total_cmds = static_cast<uint64_t>(r_cmds > 1 ? r_cmds : 1) * c_rounds;
+
+  std::cout << "End-to-end latency: " << total_cmds << " commands in "
+            << duration_us << "us (max " << o_cmds << " outstanding, "
+            << (r_cmds > 1 ? r_cmds : 1) << " command(s) per batch), "
+            << "average: " << duration_us * 1.0 / total_cmds << "us/command\n";
 }
 
 void
