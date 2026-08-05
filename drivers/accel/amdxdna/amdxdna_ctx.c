@@ -848,6 +848,11 @@ int amdxdna_drm_submit_cmd_ioctl(struct drm_device *dev, void *data, struct drm_
 		return -EINVAL;
 
 	trace_amdxdna_debug_point(current->comm, args->type, "job received");
+	/*
+	 * Lifecycle profiler stage 3: exec buf ioctl entered. Tagged with the
+	 * command BO handle since the seq is not assigned until submission.
+	 */
+	trace_amdxdna_debug_point("prof", args->cmd_handles, "exec_ioctl_enter");
 
 	switch (args->type) {
 	case AMDXDNA_CMD_SUBMIT_EXEC_BUF:
@@ -874,5 +879,7 @@ int amdxdna_drm_wait_cmd_ioctl(struct drm_device *dev, void *data, struct drm_fi
 		 client->pid, args->hwctx, args->seq, ret);
 
 	trace_amdxdna_debug_point(current->comm, args->seq, "job returned to user");
+	/* Lifecycle profiler stage 11: wait cmd ioctl returning to user. */
+	trace_amdxdna_debug_point("prof", args->seq, "wait_ioctl_return");
 	return ret;
 }

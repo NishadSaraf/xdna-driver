@@ -44,6 +44,12 @@ static irqreturn_t cert_comp_isr(int irq, void *p)
 {
 	struct cert_comp *cert_comp = p;
 
+	/*
+	 * Lifecycle profiler stage 7: CERT completion MSI-X received. The ISR is
+	 * a blanket wake with no per-command context, so it carries no seq; the
+	 * profiler associates it with the completion by timestamp order.
+	 */
+	trace_amdxdna_debug_point("prof", 0, "msix_received");
 	wake_up_all(&cert_comp->waitq);
 	return IRQ_HANDLED;
 }
@@ -756,6 +762,11 @@ int aie4_cmd_wait(struct amdxdna_hwctx *hwctx, u64 seq, u32 timeout)
 	ret = wait_event_interruptible_timeout(cert_comp->waitq,
 					       check_cmd_done(hwctx, seq, cert_comp),
 					       wait_jifs);
+	/*
+	 * Lifecycle profiler stage 10: the user wait ioctl's waiting thread is
+	 * woken (completion, timeout, or signal).
+	 */
+	trace_amdxdna_debug_point("prof", seq, "waiter_woken");
 
 	if (!ret)
 		ret = -ETIME;
@@ -1037,6 +1048,11 @@ static int submit_one_cmd(struct amdxdna_hwctx *hwctx,
 					    offsetof(struct amdxdna_cmd, header);
 	*seq = publish_cmd(hwctx);
 	ring_doorbell(hwctx);
+	/*
+	 * Lifecycle profiler stage 6: command published to host queue + doorbell
+	 * rung. This is the first stage where the command seq is known.
+	 */
+	trace_amdxdna_debug_point("prof", *seq, "cmd_submitted");
 	XDNA_DBG(xdna, "Submitted one cmd, %s seq %lld", hwctx->name, *seq);
 	return 0;
 }
@@ -1097,6 +1113,8 @@ static void aie4_job_release(struct kref *ref)
 
 static void job_done(struct amdxdna_sched_job *job)
 {
+	/* Lifecycle profiler stage 9: job marked done and fence signaled. */
+	trace_amdxdna_debug_point("prof", job->seq, "job_done");
 	job->aie4_job_state = AIE4_JOB_STATE_DONE;
 	dma_fence_signal(job->fence);
 	/*
@@ -1211,6 +1229,11 @@ static void job_worker(struct work_struct *work)
 
 	while ((job = peek_running_job(hwctx))) {
 		wait_till_seq_completed(hwctx, job->seq);
+		/*
+		 * Lifecycle profiler stage 8: reaper worker resumes after the
+		 * command completion wakeup and begins processing this job.
+		 */
+		trace_amdxdna_debug_point("prof", job->seq, "workqueue_started");
 		trace_amdxdna_debug_point(hwctx->name, job->seq, "job complete");
 
 		if (get_read_index(hwctx) > job->seq) {
@@ -1373,6 +1396,12 @@ static int submit_job_cmds(struct amdxdna_hwctx *hwctx, struct amdxdna_sched_job
 	int ret;
 	u32 i;
 
+	/*
+	 * Lifecycle profiler stage 5: job reached head of the pending list and
+	 * begins dispatch into the host queue. Still pre-seq (see stage 4).
+	 */
+	trace_amdxdna_debug_point("prof", 0, "job_started");
+
 	/* Single cmd. */
 	if (op == ERT_START_DPU) {
 		ret = submit_one_cmd(hwctx, cmd_abo, true, &job->seq, err_gen);
@@ -1471,6 +1500,13 @@ static void enqueue_pending_job(struct amdxdna_hwctx *hwctx,
 	job->aie4_job_state = AIE4_JOB_STATE_PENDING;
 	update_pending_head(priv);
 	mutex_unlock(&priv->io_lock);
+	/*
+	 * Lifecycle profiler stage 4: job pushed onto the pending list. The seq
+	 * is not assigned until publish (stage 6); this marker runs in the exec
+	 * ioctl task context, so the profiler stitches it to the seq from the
+	 * following cmd_submitted marker in the same task.
+	 */
+	trace_amdxdna_debug_point("prof", 0, "job_pushed");
 }
 
 static void cancel_pending_job(struct amdxdna_hwctx *hwctx,
