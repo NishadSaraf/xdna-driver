@@ -211,16 +211,59 @@ void amdxdna_gem_destroy_obj(struct amdxdna_gem_obj *abo)
 }
 
 /*
+ * A DEV BO owns no pages. It is a window into the heap BO that backs it and
+ * borrows that heap's kernel mapping.
+ */
+static void *amdxdna_gem_dev_bo_kva(struct amdxdna_gem_obj *abo)
+{
+	struct amdxdna_gem_obj *heap;
+	void *base;
+
+	/* vmap dev bo which is across more than 1 heap is not allowed */
+	if (abo->heap_start_id != abo->heap_end_id)
+		return ERR_PTR(-ENOMEM);
+
+	heap = xa_load(&abo->client->dev_heap_xa, abo->heap_start_id);
+	if (!heap)
+		return ERR_PTR(-ENOMEM);
+
+	base = amdxdna_gem_vmap(heap);
+	if (!base)
+		return ERR_PTR(-ENOMEM);
+
+	return base + (amdxdna_gem_dev_addr(abo) - amdxdna_gem_dev_addr(heap));
+}
+
+/*
  * Returns the error rather than logging it, for a caller that has a fallback:
  * an imported BO whose exporter implements no vmap op fails on every call.
  */
 static void *amdxdna_gem_vmap_try(struct amdxdna_gem_obj *abo)
 {
 	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
+	void *kva;
 	int ret;
 
 	if (abo->mem.kva)
 		return abo->mem.kva;
+
+	/*
+	 * The heap has to be mapped outside of this BO's lock and reservation:
+	 * a heap BO lock and reservation share their lock class with the ones
+	 * held here, so acquiring them nested is indistinguishable from taking
+	 * a lock twice.
+	 */
+	if (abo->type == AMDXDNA_BO_DEV) {
+		kva = amdxdna_gem_dev_bo_kva(abo);
+		if (IS_ERR(kva))
+			return kva;
+
+		guard(mutex)(&abo->lock);
+
+		if (!abo->mem.kva)
+			abo->mem.kva = kva;
+		return abo->mem.kva;
+	}
 
 	/* The first call to get the kva, taking slow path. */
 	guard(mutex)(&abo->lock);
@@ -770,35 +813,6 @@ static void amdxdna_gem_obj_vunmap(struct drm_gem_object *obj, struct iosys_map 
 		drm_gem_shmem_object_vunmap(obj, map);
 }
 
-/*
- * Map a DEV BO for CPU access using the containing chunk's kva.
- * The chunk is lazily vmapped on first access via amdxdna_gem_vmap().
- * The BO must fit entirely within a single chunk.
- */
-static int amdxdna_gem_dev_obj_vmap(struct drm_gem_object *obj, struct iosys_map *map)
-{
-	struct amdxdna_gem_obj *abo = to_xdna_obj(obj);
-	struct amdxdna_gem_obj *heap;
-	void *base;
-	u64 offset;
-
-	/* vmap dev bo which is across more than 1 heap is not allowed */
-	if (abo->heap_start_id != abo->heap_end_id)
-		return -ENOMEM;
-
-	heap = xa_load(&abo->client->dev_heap_xa, abo->heap_start_id);
-	if (!heap)
-		return -ENOMEM;
-
-	base = amdxdna_gem_vmap(heap);
-	if (!base)
-		return -ENOMEM;
-
-	offset = amdxdna_gem_dev_addr(abo) - amdxdna_gem_dev_addr(heap);
-	iosys_map_set_vaddr(map, base + offset);
-	return 0;
-}
-
 static struct dma_buf *amdxdna_gem_dev_obj_export(struct drm_gem_object *gobj, int flags)
 {
 	return ERR_PTR(-EOPNOTSUPP);
@@ -806,7 +820,6 @@ static struct dma_buf *amdxdna_gem_dev_obj_export(struct drm_gem_object *gobj, i
 
 static const struct drm_gem_object_funcs amdxdna_gem_dev_obj_funcs = {
 	.free = amdxdna_gem_dev_obj_free,
-	.vmap = amdxdna_gem_dev_obj_vmap,
 	.export = amdxdna_gem_dev_obj_export,
 };
 
