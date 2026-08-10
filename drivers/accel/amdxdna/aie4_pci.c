@@ -567,10 +567,30 @@ static int aie4_pf_hw_restart(struct amdxdna_dev_hdl *ndev)
 	if (ret)
 		goto mbox_fini;
 
+	/*
+	 * Every allocated slot is armed, which is how many reports firmware can
+	 * queue on the eHypervisor stack rather than how many columns the PF
+	 * covers. The stack is separate from the per eSupervisor stacks the VFs
+	 * fill, so these registrations do not compete with them.
+	 *
+	 * This belongs here rather than in aie4_pf_hw_start(), because
+	 * aie4_pf_reset_done() restarts the PF through this function alone. An
+	 * FLR resets the NPU underneath firmware, which therefore comes back
+	 * holding none of the buffers it was given, and a pool armed only from
+	 * hw start would stay unarmed for the life of the device after a reset.
+	 */
+	ret = amdxdna_async_events_init(&ndev->aie);
+	if (ret) {
+		XDNA_ERR(ndev->aie.xdna, "Register async events failed, ret %d", ret);
+		goto mbox_fini;
+	}
+
 	return 0;
 
 mbox_fini:
 	aie4_mailbox_fini(ndev);
+	/* Unarm a partially-armed async pool after the mailbox is stopped. */
+	amdxdna_async_events_fini(&ndev->aie);
 	return ret;
 }
 
@@ -606,6 +626,12 @@ static void aie4_pf_hw_stop(struct amdxdna_dev_hdl *ndev)
 
 	drm_WARN_ON(&xdna->ddev, !mutex_is_locked(&xdna->dev_lock));
 	aie4_teardown_fw(ndev);
+	/*
+	 * Unarm the async pool after the mailbox is torn down so channel
+	 * teardown cannot fire the async callback on an armed slot. The buffers
+	 * stay allocated for the next hw start.
+	 */
+	amdxdna_async_events_fini(&ndev->aie);
 }
 
 static int aie4_vf_hw_start(struct amdxdna_dev_hdl *ndev)
@@ -1417,7 +1443,7 @@ static int aie4_hwctx_reconnect_all(struct amdxdna_dev_hdl *ndev)
  * -> teardown_fw               |  Y    |  -    |   Y
  *      -> suspend_fw           |  Y    |  -    |   Y
  * -> mailbox_fini              |  -    |  Y    |   -
- * -> unarm_async_event         |  -    |  Y    |   Y
+ * -> unarm_async_event         |  Y    |  Y    |   Y
  *    ---- power boundary ----
  * <- pci_enable + set_master   |  Y    |  Y    |   Y
  * <- fw_load                   |  Y    |  -    |   Y
@@ -1428,11 +1454,16 @@ static int aie4_hwctx_reconnect_all(struct amdxdna_dev_hdl *ndev)
  * <- config_fw                 |  Y    |  -    |   Y
  *      <- calibrate_clock      |  Y    |  -    |   Y
  *      <- attach_work_buffer   |  Y    |  -    |   Y
+ * <- arm_async_event           |  Y    |  -    |   -
  * <- setup_aie                 |  -    |  Y    |   Y
  *      <- partition_init       |  -    |  Y    |   Y
  *      <- arm_async_event      |  -    |  Y    |   Y
  * <- hwctx_resume_all          |  -    |  Y    |   Y
  * <- restore VFs               |  Y    |  -    |   -
+ *
+ * The PF arms in aie4_pf_hw_restart(), after config_fw, because that is the
+ * one path both hw start and the FLR restart share. The VF and classic paths
+ * arm inside setup_aie, where the pool they cover is set up.
  */
 
 static int aie4_pf_suspend(struct amdxdna_dev *xdna)
@@ -1642,7 +1673,7 @@ pci_disable:
  * -> dpt_reset_prepare         |  Y  |  Y  |   Y
  * -> hwctx_disconnect_all      |  -  |  Y  |   Y
  * -> mailbox_fini              |  Y  |  Y  |   Y
- * -> unarm_async_event         |  -  |  Y  |   Y
+ * -> unarm_async_event         |  Y  |  Y  |   Y
  * -> fw_clear_alive            |  Y  |  Y  |   Y
  *    ---- FLR boundary ----
  * <- zero_work_buffer          |  Y  |  -  |   Y
@@ -1654,6 +1685,7 @@ pci_disable:
  * <- config_fw                 |  Y  |  -  |   Y
  *      <- calibrate_clock      |  Y  |  -  |   Y
  *      <- attach_work_buffer   |  Y  |  -  |   Y
+ * <- arm_async_event           |  Y  |  -  |   -
  * <- setup_aie                 |  -  |  Y  |   Y
  *      <- partition_init       |  -  |  Y  |   Y
  *      <- arm_async_event      |  -  |  Y  |   Y
@@ -1693,6 +1725,14 @@ static void aie4_pf_reset_prepare(struct amdxdna_dev *xdna)
 	 * alive flag so reset_done can poll for FW readiness.
 	 */
 	aie4_mailbox_fini(ndev);
+
+	/*
+	 * Unarm the async pool after the mailbox is torn down so channel
+	 * teardown cannot fire the async callback on an armed slot, and so no
+	 * report worker survives into the reset window. The buffers outlive the
+	 * reset; aie4_pf_hw_restart() arms them again in reset_done.
+	 */
+	amdxdna_async_events_fini(&ndev->aie);
 
 	aie4_fw_clear_alive(xdna);
 }
@@ -1887,13 +1927,19 @@ static int aie4_pf_init(struct amdxdna_dev *xdna)
 	if (ret)
 		return ret;
 
-	ret = aie4_pf_hw_start(xdna->dev_handle);
+	ret = aie4_alloc_async_events(xdna->dev_handle);
 	if (ret)
 		goto free_work_buf;
+
+	ret = aie4_pf_hw_start(xdna->dev_handle);
+	if (ret)
+		goto free_async_events;
 
 	aie4_xdna_init(xdna);
 	return 0;
 
+free_async_events:
+	amdxdna_async_events_free(&xdna->dev_handle->aie);
 free_work_buf:
 	aie4_free_work_buffer(xdna->dev_handle);
 	return ret;
@@ -1966,6 +2012,7 @@ static void aie4_pf_fini(struct amdxdna_dev *xdna)
 		XDNA_ERR(xdna, "Unconfig sriov failed: %d", ret);
 
 	aie4_pf_hw_stop(xdna->dev_handle);
+	amdxdna_async_events_free(&xdna->dev_handle->aie);
 	aie4_free_work_buffer(xdna->dev_handle);
 }
 
