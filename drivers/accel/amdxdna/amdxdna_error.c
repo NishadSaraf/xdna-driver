@@ -173,40 +173,83 @@ static bool aie_row_is_mem_tile(const struct aie_device *aie, u8 row)
 	       row <  aie->metadata.mem.row_start + aie->metadata.mem.row_count;
 }
 
+/*
+ * The aie4 PF decodes tile error reports but never runs the AIE metadata query,
+ * so it has no geometry to place a reported row or column in. Firmware reports
+ * at least one column for any device that was queried, which makes a zero column
+ * count distinguishable from a device that reports no mem tiles.
+ */
+static bool aie_has_metadata(const struct aie_device *aie)
+{
+	return aie->metadata.cols != 0;
+}
+
+/* Tables are terminated by a sentinel entry with a NULL name. */
+static const struct aie_error_event *
+aie_find_error_event(const struct aie_error_event *tbl, u8 event_id)
+{
+	const struct aie_error_event *e;
+
+	for (e = tbl; e->name; e++) {
+		if (e->event_id == event_id)
+			return e;
+	}
+
+	return NULL;
+}
+
+/*
+ * Resolve a memory module error without the row geometry needed to tell a
+ * dedicated mem tile from a core tile. An event id defined by exactly one of the
+ * two tables identifies the tile type on its own; one defined by both is
+ * genuinely ambiguous and is left to the caller to report as unknown.
+ */
+static const struct aie_error_event *
+aie_find_mem_error_event(const struct aie_error_lut_set *set, u8 event_id)
+{
+	const struct aie_error_event *mem_tile;
+	const struct aie_error_event *mem;
+
+	mem_tile = aie_find_error_event(set->mem_tile, event_id);
+	mem = aie_find_error_event(set->mem, event_id);
+	if (mem_tile && mem)
+		return NULL;
+
+	return mem_tile ? mem_tile : mem;
+}
+
 enum aie_error_category
 aie_lookup_error_category(struct aie_device *aie,
 			  u8 row, u8 event_id, u32 mod_type, const char **name)
 {
 	const struct aie_error_lut_set *set = aie->xdna->dev_info->luts;
-	const struct aie_error_event *tbl;
 	const struct aie_error_event *e;
 
 	*name = "unknown";
 
 	switch (mod_type) {
 	case AIE_PL_MOD:
-		tbl = set->shim;
+		e = aie_find_error_event(set->shim, event_id);
 		break;
 	case AIE_CORE_MOD:
-		tbl = set->core;
+		e = aie_find_error_event(set->core, event_id);
 		break;
 	case AIE_MEM_MOD:
-		tbl = aie_row_is_mem_tile(aie, row) ? set->mem_tile : set->mem;
+		if (aie_has_metadata(aie))
+			e = aie_find_error_event(aie_row_is_mem_tile(aie, row) ?
+						 set->mem_tile : set->mem, event_id);
+		else
+			e = aie_find_mem_error_event(set, event_id);
 		break;
 	default:
 		return AIE_ERROR_UNKNOWN;
 	}
 
-	/* Tables are terminated by a sentinel entry with a NULL name. */
-	for (e = tbl; e->name; e++) {
-		if (e->event_id != event_id)
-			continue;
+	if (!e)
+		return AIE_ERROR_UNKNOWN;
 
-		*name = e->name;
-		return e->category > AIE_ERROR_UNKNOWN ? AIE_ERROR_UNKNOWN : e->category;
-	}
-
-	return AIE_ERROR_UNKNOWN;
+	*name = e->name;
+	return e->category > AIE_ERROR_UNKNOWN ? AIE_ERROR_UNKNOWN : e->category;
 }
 
 /*
@@ -232,8 +275,10 @@ static void amdxdna_aie_decode_one(struct aie_device *aie,
  * aie->last_async_err (the field read under dev_lock by the GET_ARRAY query).
  * Returns true when the report is valid (at least one error and every column in
  * range). A column outside [0, metadata.cols) makes the whole report invalid so
- * the cache is not updated from unvalidated data. dev_lock is taken only around
- * the cache write; the iteration itself runs without the lock.
+ * the cache is not updated from unvalidated data; a device that reports no
+ * geometry has nothing to validate against and skips the range check. dev_lock
+ * is taken only around the cache write; the iteration itself runs without the
+ * lock.
  */
 static bool amdxdna_aie_backtrack_and_cache(struct aie_device *aie,
 					    void *err_info, u32 num_err)
@@ -256,7 +301,7 @@ static bool amdxdna_aie_backtrack_and_cache(struct aie_device *aie,
 		XDNA_ERR(xdna, "\tCategory: %s", d.cat_str);
 		XDNA_ERR(xdna, "\tEvent (ID): %s (%u)", d.event_str, err->event_id);
 
-		if (err->col >= aie->metadata.cols) {
+		if (aie_has_metadata(aie) && err->col >= aie->metadata.cols) {
 			XDNA_WARN(xdna, "Invalid column number %u", err->col);
 			return false;
 		}

@@ -141,6 +141,10 @@ struct aie_error_event {
  * @mem: table for AIE_MEM_MOD otherwise (the core-tile memory module).
  *
  * Each table is terminated by a sentinel entry with a NULL @name.
+ *
+ * Where the mem-tile row range is not known the two memory tables are searched
+ * by event id instead of by row, which stays unambiguous only while their id
+ * ranges do not overlap.
  */
 struct aie_error_lut_set {
 	const struct aie_error_event	*shim;
@@ -151,8 +155,9 @@ struct aie_error_lut_set {
 
 /*
  * Shared module-dispatch + lookup for the per-arch event-category tables. Sets
- * *name (default "unknown"), selects the table by module (and row for MEM),
- * runs the match loop, and returns the error category.
+ * *name (default "unknown"), selects the table by module (for MEM by row where
+ * the mem-tile row range is known and by event id otherwise), runs the match
+ * loop, and returns the error category.
  */
 enum aie_error_category
 aie_lookup_error_category(struct aie_device *aie,
