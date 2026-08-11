@@ -321,6 +321,15 @@ static int amdxdna_async_error_cb(void *handle, void __iomem *data, size_t size)
 
 static int amdxdna_async_event_send(struct amdxdna_async_event *e)
 {
+	/*
+	 * Both back ends arm over the management channel, which a mailbox
+	 * timeout can tear down (see aie_send_mgmt_msg_wait()) while the event
+	 * pool stays in place. Check it here rather than in each back end, so a
+	 * slot is never armed against a destroyed channel.
+	 */
+	if (!e->aie->mgmt_chann)
+		return -ENODEV;
+
 	drm_clflush_virt_range(e->buf, e->size); /* device can access */
 	return e->aie->xdna->dev_info->ops->register_async_event(e->aie, e->addr, e->size,
 								 e, amdxdna_async_error_cb);
