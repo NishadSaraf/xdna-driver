@@ -215,4 +215,5 @@ const struct amdxdna_dev_info dev_npu4_info = {
 	.ops               = &aie2_ops, /* NPU4 can share NPU1's callback */
 	.luts              = &aie2_error_luts,
 	.async_max_status_code = MAX_AIE2_STATUS_CODE,
+	.async_full_status_code = AIE2_STATUS_ASYNC_EVENT_MSGS_FULL,
 };
