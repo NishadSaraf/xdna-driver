@@ -77,6 +77,22 @@ enum amdxdna_error_module {
  * callbacks in struct amdxdna_dev_ops, and the MAX status code and the
  * per-generation AIE tile-error categorization tables (luts) in
  * struct amdxdna_dev_info.
+ *
+ * The pool has a four-stage lifetime that mirrors the aie4 DRAM work buffer:
+ *
+ *   probe     amdxdna_async_events_alloc()  allocate the slots and buffers
+ *   hw start  amdxdna_async_events_init()   register the slots with firmware
+ *   hw stop   amdxdna_async_events_fini()   unarm the slots, keep the buffers
+ *   remove    amdxdna_async_events_free()   release the slots and buffers
+ *
+ * Keeping the buffers across a suspend/resume cycle means the resume path never
+ * has to allocate, and it removes the window where a mailbox message still holds
+ * a slot as its callback handle after the slot has been freed.
+ *
+ * When firmware reports an event, the worker copies the report out of the slot
+ * buffer and re-arms the slot with that same buffer before decoding the copy,
+ * so that the pool firmware draws from is replenished as early as possible and
+ * reporting an error never has to allocate.
  */
 
 /* Per-event async report buffer size. Shared by aie2 and aie4 firmware. */
@@ -193,7 +209,9 @@ void amdxdna_aie_fill_decode(enum aie_error_category cat, u32 mod_type,
 			     const char *event_name,
 			     struct amdxdna_aie_err_decode *out);
 
-int amdxdna_async_events_alloc(struct aie_device *aie, u32 total_col);
+int amdxdna_async_events_alloc(struct aie_device *aie);
+int amdxdna_async_events_init(struct aie_device *aie);
+void amdxdna_async_events_fini(struct aie_device *aie);
 void amdxdna_async_events_free(struct aie_device *aie);
 bool amdxdna_async_events_queue_work(struct aie_device *aie, struct work_struct *work);
 int amdxdna_get_array_last_async_error(struct aie_device *aie,
