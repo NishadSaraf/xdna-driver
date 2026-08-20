@@ -140,7 +140,7 @@ void *amdxdna_iommu_alloc(struct amdxdna_dev *xdna, size_t size, dma_addr_t *dma
 		return iova;
 	}
 
-	cpu_addr = (void *)__get_free_pages(GFP_KERNEL, get_order(size));
+	cpu_addr = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, get_order(size));
 	if (!cpu_addr) {
 		ret = -ENOMEM;
 		goto free_iova;
