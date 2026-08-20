@@ -60,6 +60,8 @@ struct amdxdna_async_event_resp {
  * @buf: CPU address of the report buffer.
  * @addr: DMA address of the report buffer.
  * @size: report buffer size.
+ * @refusal_logged: set once this slot has reported a refusal, cleared when the
+ * slot is armed.
  * @resp: last mailbox response (status and event type) for this slot.
  */
 struct amdxdna_async_event {
@@ -70,6 +72,7 @@ struct amdxdna_async_event {
 	void				*buf;
 	dma_addr_t			addr;
 	u32				size;
+	bool				refusal_logged;
 	struct amdxdna_async_event_resp	resp;
 };
 
@@ -330,6 +333,7 @@ static int amdxdna_async_event_send(struct amdxdna_async_event *e)
 	if (!e->aie->mgmt_chann)
 		return -ENODEV;
 
+	e->refusal_logged = false;
 	drm_clflush_virt_range(e->buf, e->size); /* device can access */
 	return e->aie->xdna->dev_info->ops->register_async_event(e->aie, e->addr, e->size,
 								 e, amdxdna_async_error_cb);
@@ -341,17 +345,36 @@ static void amdxdna_async_error_worker(struct work_struct *err_work)
 	const struct amdxdna_dev_info *info = e->aie->xdna->dev_info;
 	struct amdxdna_dev *xdna = e->aie->xdna;
 	struct aie_device *aie = e->aie;
+	u32 status = e->resp.status;
 
 	/*
 	 * On mailbox channel teardown the registered-event callback runs with
 	 * data == NULL (see xdna_mailbox_stop_channel), which leaves resp.status
 	 * at the sentinel. Skip decode and re-registration in that case so the
-	 * dying channel is not touched.
+	 * dying channel is not touched. This one stays silent: teardown fires
+	 * the callback on every armed slot, on every hw stop.
 	 */
-	if (e->resp.status == info->async_max_status_code)
+	if (status == info->async_max_status_code)
 		return;
 
 	e->resp.status = info->async_max_status_code;
+
+	/*
+	 * Firmware refuses a registration once its async buffer stack is full,
+	 * and answers on the slot itself rather than to the send that was
+	 * refused, which returns before firmware has looked at it. There is no
+	 * report behind such a completion, and re-arming the slot only earns
+	 * another refusal, so retire the slot and say so once. Refusals come in
+	 * batches, one per surplus slot, and unbounded logging here is what made
+	 * this expensive rather than merely wrong.
+	 */
+	if (status == info->async_full_status_code) {
+		if (!e->refusal_logged) {
+			e->refusal_logged = true;
+			XDNA_WARN(xdna, "Firmware refused the async event registration, slot idle");
+		}
+		return;
+	}
 
 	/* Invalidate stale cache lines before reading the device-written report. */
 	drm_clflush_virt_range(e->buf, e->size);
