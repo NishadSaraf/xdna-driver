@@ -174,6 +174,7 @@ const struct amdxdna_dev_info dev_npu3_pf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu3_vf_info = {
@@ -189,6 +190,7 @@ const struct amdxdna_dev_info dev_npu3_vf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu3_classic_info = {
@@ -206,6 +208,7 @@ const struct amdxdna_dev_info dev_npu3_classic_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu9_pf_info = {
@@ -222,6 +225,7 @@ const struct amdxdna_dev_info dev_npu9_pf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu9_vf_info = {
@@ -237,6 +241,7 @@ const struct amdxdna_dev_info dev_npu9_vf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu9_classic_info = {
@@ -254,6 +259,7 @@ const struct amdxdna_dev_info dev_npu9_classic_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu10_pf_info = {
@@ -270,6 +276,7 @@ const struct amdxdna_dev_info dev_npu10_pf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu10_vf_info = {
@@ -285,6 +292,7 @@ const struct amdxdna_dev_info dev_npu10_vf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu10_classic_info = {
@@ -302,6 +310,7 @@ const struct amdxdna_dev_info dev_npu10_classic_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu11_pf_info = {
@@ -318,6 +327,7 @@ const struct amdxdna_dev_info dev_npu11_pf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu11_vf_info = {
@@ -333,6 +343,7 @@ const struct amdxdna_dev_info dev_npu11_vf_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
 
 const struct amdxdna_dev_info dev_npu11_classic_info = {
@@ -350,4 +361,5 @@ const struct amdxdna_dev_info dev_npu11_classic_info = {
 	.luts			= &aie4_error_luts,
 	.async_max_status_code	= MAX_AIE4_MSG_STATUS_CODE,
 	.async_full_status_code	= AIE4_MSG_STATUS_ASYNC_EVENT_MSGS_FULL,
+	.async_event_cnt	= 4,
 };
