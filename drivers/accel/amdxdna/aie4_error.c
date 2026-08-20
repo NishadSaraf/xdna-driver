@@ -226,7 +226,18 @@ static void aie4_async_ctx_error_cache(struct aie_device *aie,
 
 		if (priv->kernel_submit) {
 			mutex_lock(&priv->io_lock);
-			memcpy(&priv->cached_ctx_error, ctx_err, sizeof(*ctx_err));
+			/*
+			 * An unfilled health region is stale slot content and
+			 * not a report: the slots are pooled per device, so
+			 * what sits behind it belongs to whichever context
+			 * reported last. Cache nothing in that case, as the
+			 * notification-only path below already does.
+			 */
+			if (health->version)
+				memcpy(&priv->cached_ctx_error, ctx_err, sizeof(*ctx_err));
+			else
+				memset(&priv->cached_ctx_error, 0,
+				       sizeof(priv->cached_ctx_error));
 			/*
 			 * Mark a ctx error cached: the ensuing ERROR teardown sets
 			 * has_reset, so the job worker reports the faulting job as
