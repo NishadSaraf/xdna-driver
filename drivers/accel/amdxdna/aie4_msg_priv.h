@@ -76,6 +76,21 @@ enum aie4_msg_context_priority_band {
 	AIE4_CONTEXT_PRIORITY_BAND_COUNT
 };
 
+/*
+ * Unified scheduling priority level (0..31). Firmware derives both the
+ * scheduling class and the DPM clock cap from the level and ignores
+ * priority_band, so the level is what actually carries a QoS request. These are
+ * the per-band defaults firmware itself uses; within a band every level maps to
+ * the same DPM cap, so these also give the highest cap that band can reach.
+ */
+enum aie4_msg_context_priority_level {
+	AIE4_CONTEXT_PRIORITY_LEVEL_IDLE = 0,
+	AIE4_CONTEXT_PRIORITY_LEVEL_NORMAL = 1,
+	AIE4_CONTEXT_PRIORITY_LEVEL_FOCUS = 16,
+	AIE4_CONTEXT_PRIORITY_LEVEL_REAL_TIME = 30,
+	AIE4_CONTEXT_PRIORITY_LEVEL_MAX = 31
+};
+
 struct aie4_msg_identify_req {
 	__u32 rsvd;
 } __packed;
