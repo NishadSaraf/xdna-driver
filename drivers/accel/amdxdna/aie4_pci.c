@@ -363,6 +363,23 @@ static int aie4_mailbox_init(struct amdxdna_dev_hdl *ndev)
 	struct mailbox_info mbox_info;
 	int ret;
 
+	/*
+	 * Callers must tear the mailbox down with aie4_mailbox_fini()
+	 * before starting it again. A live channel owns its MSI-X
+	 * interrupt and is the dev_id free_irq() needs to release it, but
+	 * aie4_mailbox_start() overwrites ndev->aie.mgmt_chann before
+	 * request_irq() gets the chance to reject the duplicate, which
+	 * would strand the previous channel holding an interrupt nothing
+	 * can reach. Refuse while everything can still be undone.
+	 *
+	 * Only the channel is checked. ndev->mbox outlives an init that
+	 * failed after xdnam_mailbox_create(), because those callers
+	 * return without an aie4_mailbox_fini(); keying off it as well
+	 * would turn a retryable failure into a permanent one.
+	 */
+	if (drm_WARN_ON(&xdna->ddev, ndev->aie.mgmt_chann))
+		return -EEXIST;
+
 	ret = aie4_mailbox_info(xdna, &mbox_info);
 	if (ret)
 		return ret;
