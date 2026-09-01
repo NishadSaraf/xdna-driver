@@ -328,6 +328,18 @@ static void aie2_hw_stop(struct amdxdna_dev *xdna)
 		return;
 	}
 
+	/*
+	 * Publish the stopped state before the teardown below can release
+	 * dev_lock. amdxdna_async_events_free() drops the lock to drain the
+	 * async workqueue, and aie2_sched_job_timedout() can take it in that
+	 * window and call aie2_hw_reset(); it has to see AIE2_DEV_INIT and
+	 * early-return rather than power-cycle a device that is already most
+	 * of the way torn down. dev_status is only read under dev_lock, and
+	 * the lock is held continuously from the check above to that drop, so
+	 * moving the store up here is invisible to everything else.
+	 */
+	ndev->dev_status = AIE2_DEV_INIT;
+
 	aie2_runtime_cfg(ndev, AIE2_RT_CFG_CLK_GATING, NULL);
 	aie2_mgmt_fw_fini(ndev);
 	aie_destroy_chann(&ndev->aie, &ndev->aie.mgmt_chann);
@@ -337,8 +349,6 @@ static void aie2_hw_stop(struct amdxdna_dev *xdna)
 	aie2_smu_fini(ndev);
 	amdxdna_async_events_free(&ndev->aie);
 	pci_disable_device(pdev);
-
-	ndev->dev_status = AIE2_DEV_INIT;
 }
 
 static int aie2_hw_start(struct amdxdna_dev *xdna)
