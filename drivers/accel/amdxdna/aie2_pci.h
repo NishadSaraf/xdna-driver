@@ -326,7 +326,6 @@ int aie2_hwctx_heap_expand(struct amdxdna_hwctx *hwctx, struct amdxdna_gem_obj *
 /* TDR APIs */
 #ifndef HAVE_6_17_drm_gpu_sched_stat_no_hang
 extern uint tdr_timeout_ms;
-extern bool tdr_dump_only;
 
 void aie2_tdr_start(struct amdxdna_dev *xdna);
 void aie2_tdr_stop(struct amdxdna_dev *xdna);
