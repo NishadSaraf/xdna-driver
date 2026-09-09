@@ -142,6 +142,16 @@ struct amdxdna_dev_info {
 	/* Asynchronous error reporting data (per AIE generation). */
 	const struct aie_error_lut_set	*luts;
 	u32				async_max_status_code;
+	/* Status firmware refuses a registration with when its stack is full. */
+	u32				async_full_status_code;
+	/*
+	 * Async error report slots to pre-allocate for this part. Firmware
+	 * backtracks every column of an event into one buffer, so this is how
+	 * many reports it can queue and not the columns it covers. Probe states
+	 * it per part because the column count the pool is sized against is only
+	 * known once hw start has run the AIE metadata query.
+	 */
+	u32				async_event_cnt;
 };
 
 struct amdxdna_carveout;
