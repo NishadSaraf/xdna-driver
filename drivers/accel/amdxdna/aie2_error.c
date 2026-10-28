@@ -5,6 +5,7 @@
 
 #include <drm/drm_device.h>
 #include <drm/drm_print.h>
+#include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/mutex.h>
 
@@ -103,6 +104,35 @@ int aie2_async_event_register(struct aie_device *aie, dma_addr_t addr, u32 size,
 	struct amdxdna_dev_hdl *ndev = aie->xdna->dev_handle;
 
 	return aie2_register_asyn_event_msg(ndev, addr, size, handle, cb);
+}
+
+/*
+ * Channel async callback for messages firmware sends on its own. Runs in the
+ * mailbox RX worker, so it only logs. Always returns 0 so a notification can
+ * never wedge the channel. Firmware can send the same cleanup failure each
+ * time it retries the context, so the logs are rate limited.
+ */
+int aie2_mgmt_async_msg_handler(void *handle, u32 opcode, void __iomem *data, size_t size)
+{
+	struct async_res_cleanup_fail_msg __iomem *msg = data;
+	struct amdxdna_dev_hdl *ndev = handle;
+	struct amdxdna_dev *xdna = ndev->aie.xdna;
+
+	if (opcode != MSG_OP_ASYNC_RES_CLEANUP_FAIL) {
+		XDNA_WARN_RATELIMITED(xdna, "Unhandled firmware message opcode 0x%x", opcode);
+		return 0;
+	}
+
+	if (!data || size < sizeof(*msg)) {
+		XDNA_WARN_RATELIMITED(xdna, "Malformed cleanup failure message, size %zu", size);
+		return 0;
+	}
+
+	XDNA_ERR_RATELIMITED(xdna,
+			     "Firmware failed to clean up columns for context %u: start column %u, %u columns",
+			     readl(&msg->context_id), readb(&msg->start_col),
+			     readb(&msg->num_col));
+	return 0;
 }
 
 int aie2_get_array_async_error(struct amdxdna_dev_hdl *ndev,

@@ -43,6 +43,7 @@ enum aie2_msg_opcode {
 	MSG_OP_GET_COREDUMP                = 0x119,
 	MSG_OP_CALIBRATE_CLOCK             = 0x11C,
 	MSG_OP_MAX_DRV_OPCODE,
+	MSG_OP_ASYNC_RES_CLEANUP_FAIL      = 0x202,
 	MSG_OP_AIE_RW_ACCESS               = 0x203,
 	MSG_OP_MAX_ASYNC_OPCODE,
 	MSG_OP_GET_PROTOCOL_VERSION        = 0x301,
@@ -372,6 +373,20 @@ struct async_event_msg_req {
 struct async_event_msg_resp {
 	enum aie2_msg_status	status;
 	enum async_event_type	type;
+} __packed;
+
+/*
+ * Sent by firmware when it cannot clean up a partition before running the
+ * context on it. Firmware does not fill in reason.
+ */
+struct async_res_cleanup_fail_msg {
+	__u32	context_id;
+	__u32	aie_type;
+	__u8	start_col;
+	__u8	num_col;
+	__u8	num_unused_col;
+	__u8	reserved;
+	__u32	reason;
 } __packed;
 
 #define MAX_CHAIN_CMDBUF_SIZE SZ_4K

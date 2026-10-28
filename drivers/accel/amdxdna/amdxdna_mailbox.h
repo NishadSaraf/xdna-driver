@@ -10,7 +10,10 @@ struct drm_device;
 struct mailbox;
 struct mailbox_channel;
 
-/* Handler for firmware-initiated messages, sent with ID 0, routed by @opcode. */
+/*
+ * Handler for firmware-initiated messages, routed by @opcode. aie4 firmware
+ * sends them with ID 0, aie2 firmware with IDs from 0x80000000 up.
+ */
 typedef int (*xdna_mailbox_async_cb_t)(void *handle, u32 opcode, void __iomem *data, size_t size);
 
 /*
@@ -112,8 +115,9 @@ xdna_mailbox_start_channel(struct mailbox_channel *mb_chann,
  * @mailbox_chann: the handle returned from xdna_mailbox_alloc_channel()
  * @async_handle: opaque handle passed back to @async_cb
  * @async_cb: callback invoked for firmware-initiated messages, which arrive
- *            with message ID 0, routed by @opcode. Must be non-blocking; its
- *            return value is advisory only and never tears the channel down.
+ *            with message ID 0 on aie4 and with IDs from 0x80000000 up on
+ *            aie2, routed by @opcode. Must be non-blocking; its return value
+ *            is advisory only and never tears the channel down.
  */
 void xdna_mailbox_set_async_cb(struct mailbox_channel *mailbox_chann, void *async_handle,
 			       xdna_mailbox_async_cb_t async_cb);

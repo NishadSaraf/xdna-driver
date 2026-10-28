@@ -39,6 +39,8 @@
 
 #define MAGIC_VAL			0x1D000000U
 #define MAGIC_VAL_MASK			0xFF000000
+/* aie2 firmware numbers the messages it sends on its own from here up. */
+#define ASYNC_MSG_START_ID		0x80000000U
 #define MSG_RX_TIMER			200 /* milliseconds */
 #define MAILBOX_NAME			"xdna_mailbox"
 
@@ -66,7 +68,10 @@ struct mailbox_channel {
 	u32				i2x_head;
 	bool				bad_state;
 
-	/* Optional handler for firmware-initiated messages, sent with ID 0 */
+	/*
+	 * Optional handler for firmware-initiated messages, which carry ID 0
+	 * (aie4) or IDs from ASYNC_MSG_START_ID up (aie2)
+	 */
 	void				*async_handle;
 	xdna_mailbox_async_cb_t		async_cb;
 
@@ -299,9 +304,9 @@ check_again:
 }
 
 /*
- * Handle a firmware-initiated message, sent with message ID 0. Always reports
- * success so one unexpected notification cannot put the channel in bad_state
- * and disable its irq.
+ * Handle a message firmware sent of its own accord, without MAGIC_VAL. Always
+ * reports success so one unexpected notification cannot put the channel in
+ * bad_state and disable its irq.
  */
 static int
 mailbox_handle_async_msg(struct mailbox_channel *mb_chann,
@@ -333,10 +338,11 @@ mailbox_get_resp(struct mailbox_channel *mb_chann, struct xdna_msg_header *heade
 	u32 slot;
 
 	msg_id = header->id;
-	if (!msg_id) {
+	if (!msg_id || header->id >= ASYNC_MSG_START_ID) {
 		/*
-		 * Firmware sends notifications of its own accord with message
-		 * ID 0, which lacks MAGIC_VAL. Not a protocol error.
+		 * Firmware sends messages of its own accord without MAGIC_VAL:
+		 * aie4 with ID 0, aie2 with IDs counting up from
+		 * ASYNC_MSG_START_ID. Neither is a protocol error.
 		 */
 		return mailbox_handle_async_msg(mb_chann, header, data);
 	}
