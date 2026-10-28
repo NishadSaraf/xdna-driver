@@ -148,6 +148,16 @@ int aie2_hwctx_restart(struct amdxdna_dev *xdna, struct amdxdna_hwctx *hwctx)
 	kfree(hwctx->priv->cached_health);
 	hwctx->priv->cached_health = NULL;
 
+	/*
+	 * A resume that is retried without an intervening suspend reaches here
+	 * again for a context whose earlier restart may have left its firmware
+	 * context alive. Creating a second one would orphan the first, and
+	 * firmware refuses to suspend while any context is alive. On the normal
+	 * resume and TDR paths the context is already destroyed, so this does
+	 * nothing there.
+	 */
+	aie2_destroy_context(xdna->dev_handle, hwctx);
+
 	ret = aie2_create_context(xdna->dev_handle, hwctx);
 	if (ret) {
 		XDNA_ERR(xdna, "Create hwctx failed, ret %d", ret);
@@ -159,7 +169,7 @@ int aie2_hwctx_restart(struct amdxdna_dev *xdna, struct amdxdna_hwctx *hwctx)
 				heap->mem.size);
 	if (ret) {
 		XDNA_ERR(xdna, "Map host buf failed, ret %d", ret);
-		goto out;
+		goto destroy;
 	}
 
 	xa_for_each_range(&hwctx->client->dev_heap_xa, heap_id, heap, 1,
@@ -169,15 +179,25 @@ int aie2_hwctx_restart(struct amdxdna_dev *xdna, struct amdxdna_hwctx *hwctx)
 					heap->mem.size);
 		if (ret) {
 			XDNA_ERR(xdna, "Add heap %ld failed ret %d", heap_id, ret);
-			goto out;
+			goto destroy;
 		}
 	}
 
 	ret = aie2_config_cu(hwctx, NULL);
 	if (ret) {
 		XDNA_ERR(xdna, "Config cu failed, ret %d", ret);
-		goto out;
+		goto destroy;
 	}
+
+	goto out;
+
+destroy:
+	/*
+	 * The firmware context exists but is not fully set up. Destroy it so a
+	 * failed restart never leaves one behind for the next suspend to trip
+	 * on. The next resume retries the whole restart.
+	 */
+	aie2_destroy_context(xdna->dev_handle, hwctx);
 
 out:
 	XDNA_DBG(xdna, "%s restarted, ret %d", hwctx->name, ret);
