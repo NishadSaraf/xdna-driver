@@ -727,6 +727,20 @@ partition_fini:
 	return ret;
 }
 
+/*
+ * Suspend the firmware before a failed restart tears its mailbox down, as
+ * aie4_teardown_fw() does. Firmware withdraws PMFW's consent to power-off on
+ * the first driver message and grants it again only while handling SUSPEND,
+ * so without one the aie4_fw_unload() of a failed probe or resume cannot power
+ * the NPU off, and the SMU then refuses every later probe. A timed-out message
+ * destroys the channel, and then no SUSPEND can be sent.
+ */
+static void aie4_restart_unwind_suspend(struct amdxdna_dev_hdl *ndev)
+{
+	if (ndev->aie.mgmt_chann)
+		aie4_suspend_fw(ndev);
+}
+
 //FIX this after fw_load can work after FLR
 static int aie4_pf_hw_restart(struct amdxdna_dev_hdl *ndev)
 {
@@ -747,6 +761,7 @@ static int aie4_pf_hw_restart(struct amdxdna_dev_hdl *ndev)
 	return 0;
 
 mbox_fini:
+	aie4_restart_unwind_suspend(ndev);
 	aie4_mailbox_fini(ndev);
 	return ret;
 }
@@ -848,6 +863,7 @@ static int aie4_classic_hw_restart(struct amdxdna_dev_hdl *ndev)
 	return 0;
 
 mbox_fini:
+	aie4_restart_unwind_suspend(ndev);
 	aie4_mailbox_fini(ndev);
 	return ret;
 }
@@ -1056,11 +1072,11 @@ static int aie4_select_fw(struct amdxdna_dev_hdl *ndev,
 	return ret;
 }
 
-static int aie4m_pcidev_init(struct amdxdna_dev *xdna)
+static int aie4m_pcidev_init(struct amdxdna_dev *xdna,
+			     void __iomem *tbl[PCI_NUM_RESOURCES])
 {
 	struct pci_dev *pdev = to_pci_dev(xdna->ddev.dev);
 	struct amdxdna_dev_hdl *ndev;
-	void __iomem *tbl[PCI_NUM_RESOURCES] = {0};
 	unsigned long bars = 0;
 	int ret, i;
 
@@ -1119,17 +1135,26 @@ static int aie4m_pcidev_init(struct amdxdna_dev *xdna)
 	if (ret)
 		return ret;
 
-	/* Leaves the firmware running; probe skips aie4_fw_load() */
-	if (ndev->priv->npufw_path && ndev->priv->certfw_path) {
-		ret = aie4_select_fw(ndev, tbl);
-		if (ret)
-			return ret;
-	}
-
 	amdxdna_vbnv_init(xdna);
 
 	XDNA_DBG(xdna, "init finished");
 	return 0;
+}
+
+/*
+ * Boot the firmware only after probe has allocated what it needs, so that a
+ * failed allocation never has to stop firmware that is running but not
+ * suspended. Before the first driver message PMFW still lets the driver cut
+ * power, and cutting it to running firmware hangs the host.
+ */
+static int aie4_boot_fw(struct amdxdna_dev_hdl *ndev,
+			void __iomem *tbl[PCI_NUM_RESOURCES])
+{
+	if (!ndev->priv->npufw_path || !ndev->priv->certfw_path)
+		return 0;
+
+	/* Leaves the firmware running; probe skips aie4_fw_load() */
+	return aie4_select_fw(ndev, tbl);
 }
 
 /*
@@ -2319,15 +2344,20 @@ static void aie4_xdna_fini(struct amdxdna_dev *xdna)
 
 static int aie4_pf_init(struct amdxdna_dev *xdna)
 {
+	void __iomem *tbl[PCI_NUM_RESOURCES] = {};
 	int ret;
 
-	ret = aie4m_pcidev_init(xdna);
+	ret = aie4m_pcidev_init(xdna, tbl);
 	if (ret)
 		return ret;
 
 	ret = aie4_alloc_work_buffer(xdna->dev_handle);
 	if (ret)
-		goto fw_unload;
+		return ret;
+
+	ret = aie4_boot_fw(xdna->dev_handle, tbl);
+	if (ret)
+		goto free_work_buf;
 
 	/* aie4_select_fw() left the firmware running, so skip aie4_fw_load() */
 	ret = aie4_pf_hw_restart(xdna->dev_handle);
@@ -2339,15 +2369,17 @@ static int aie4_pf_init(struct amdxdna_dev *xdna)
 
 fw_unload:
 	aie4_fw_unload(xdna->dev_handle);
+free_work_buf:
 	aie4_free_work_buffer(xdna->dev_handle);
 	return ret;
 }
 
 static int aie4_vf_init(struct amdxdna_dev *xdna)
 {
+	void __iomem *tbl[PCI_NUM_RESOURCES] = {};
 	int ret;
 
-	ret = aie4m_pcidev_init(xdna);
+	ret = aie4m_pcidev_init(xdna, tbl);
 	if (ret)
 		return ret;
 
@@ -2361,15 +2393,20 @@ static int aie4_vf_init(struct amdxdna_dev *xdna)
 
 static int aie4_classic_init(struct amdxdna_dev *xdna)
 {
+	void __iomem *tbl[PCI_NUM_RESOURCES] = {};
 	int ret;
 
-	ret = aie4m_pcidev_init(xdna);
+	ret = aie4m_pcidev_init(xdna, tbl);
 	if (ret)
 		return ret;
 
 	ret = aie4_alloc_work_buffer(xdna->dev_handle);
 	if (ret)
-		goto fw_unload;
+		return ret;
+
+	ret = aie4_boot_fw(xdna->dev_handle, tbl);
+	if (ret)
+		goto free_work_buf;
 
 	/* aie4_select_fw() left the firmware running, so skip aie4_fw_load() */
 	ret = aie4_classic_hw_restart(xdna->dev_handle);
@@ -2381,6 +2418,7 @@ static int aie4_classic_init(struct amdxdna_dev *xdna)
 
 fw_unload:
 	aie4_fw_unload(xdna->dev_handle);
+free_work_buf:
 	aie4_free_work_buffer(xdna->dev_handle);
 	return ret;
 }
