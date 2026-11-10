@@ -1612,7 +1612,7 @@ TEST_io_runlist_bad_cmd(device::id_type id, std::shared_ptr<device>& sdev, arg_t
   err_cmd_packet_by_index->state = cmd_packet->state;
   // In case of timeout, the returned context health data is in index 0's cmd pkt,
   // copy it to the real bad command for verify_result call on the bad one later.
-  if (is_timeout) {
+  if (is_timeout && !dev_filter_is_npu3vf(id, dev)) {
     auto cmdpkt = (*bad).get_bos()[IO_TEST_BO_CMD].tbo.get()->map();
     auto size = (*bad).get_bos()[IO_TEST_BO_CMD].tbo.get()->size();
     std::memcpy(cmdpkt, err_cmd_packet_by_index, size);
