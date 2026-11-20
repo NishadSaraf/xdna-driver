@@ -499,13 +499,24 @@ const dpm_clk_entry npu4_dpm_table[] = {
 };
 
 constexpr int DPM_NUM_LEVELS = 8;
-constexpr uint32_t HCLK_MARGIN_PCT = 2;
 constexpr uint32_t DPM_COL_OPC = 4096;
 constexpr uint32_t DPM_NOP_NUM_COL = 4;
 constexpr uint32_t DPM_MAX_OPC = DPM_COL_OPC * DPM_NOP_NUM_COL;
 
 constexpr uint32_t SYS_EFF_FACTOR = 2;
 
+// Settled measured H-clocks of the same DPM level must match within this.
+constexpr uint32_t HCLK_MATCH_PCT = 2;
+// A level with a higher nominal H-clock must measure higher by at least this
+// share of the nominal difference.
+constexpr uint32_t HCLK_RISE_PCT = 50;
+// The measured H-clock has settled once it stays within this over the window.
+constexpr uint32_t HCLK_SETTLE_PERMILLE = 5;
+constexpr int HCLK_SETTLE_WINDOW_MS = 1000;
+constexpr int HCLK_SETTLE_TIMEOUT_MS = 20000;
+constexpr int HCLK_POLL_MS = 100;
+
+// H-clock measured by the platform firmware.
 uint32_t
 query_hclk(device* dev)
 {
@@ -541,70 +552,96 @@ set_power_mode(device* dev, int mode)
     static_cast<query::performance_mode::power_type>(mode));
 }
 
-bool
-hclk_within_margin(uint32_t actual, uint32_t expected)
-{
-  uint32_t margin = expected * HCLK_MARGIN_PCT / 100;
-  if (margin == 0)
-    margin = 1;
-  return actual >= expected - margin && actual <= expected + margin;
-}
-
-// Poll query_hclk() until clock_ok() is satisfied or the timeout expires, and
-// return the last measured H-clock. Callers decide what to make of the result.
-template <typename ClockOk>
+// Nominal H-clock of the DPM level the driver last programmed.
 uint32_t
-poll_hclk(device* dev, ClockOk clock_ok)
+query_dpm_hclk(device* dev)
 {
-  constexpr int timeout_ms = 20000;
-  constexpr int poll_interval_ms = 10;
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  uint32_t actual = 0;
+  auto res_info = device_query<query::xrt_resource_raw>(dev);
 
-  do {
-    actual = query_hclk(dev);
-    if (clock_ok(actual))
-      break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
-  } while (std::chrono::steady_clock::now() < deadline);
-
-  return actual;
+  for (const auto& res : res_info) {
+    if (res.type == query::xrt_resource_raw::resource_type::npu_curr_clk_max)
+      return static_cast<uint32_t>(res.data_uint64);
+  }
+  throw std::runtime_error("npu_curr_clk_max not found in resource info");
 }
 
-// Verify the H-clock is within ±HCLK_MARGIN_PCT of the expected value.
-void
-verify_hclk(device* dev, uint32_t expected, const std::string& ctx)
+// Wait for the measured H-clock to settle and return it. The firmware averages
+// the measurement, so it takes seconds to follow a DPM level change.
+uint32_t
+settle_hclk(device* dev, const std::string& ctx)
 {
-  uint32_t actual = poll_hclk(dev, [expected](uint32_t v) { return hclk_within_margin(v, expected); });
+  const auto window = std::chrono::milliseconds(HCLK_SETTLE_WINDOW_MS);
+  const auto start = std::chrono::steady_clock::now();
+  const auto deadline = start + std::chrono::milliseconds(HCLK_SETTLE_TIMEOUT_MS);
+  std::vector<std::pair<std::chrono::steady_clock::time_point, uint32_t>> samples;
 
-  if (!hclk_within_margin(actual, expected))
-    throw std::runtime_error(ctx + ": expected H-clock ~" + std::to_string(expected) +
-                             " MHz (±" + std::to_string(HCLK_MARGIN_PCT) + "%), got " +
-                             std::to_string(actual) + " MHz");
+  while (true) {
+    auto now = std::chrono::steady_clock::now();
+    uint32_t hclk = query_hclk(dev);
+    samples.emplace_back(now, hclk);
 
-  std::cout << "  " << ctx << ": H-clock " << actual << " MHz (expected ~"
-            << expected << ") [OK]" << std::endl;
+    if (now - start >= window) {
+      uint32_t lo = hclk;
+      uint32_t hi = hclk;
+      for (const auto& sample : samples) {
+        if (now - sample.first > window)
+          continue;
+        lo = std::min(lo, sample.second);
+        hi = std::max(hi, sample.second);
+      }
+      if ((hi - lo) * 1000 <= hclk * HCLK_SETTLE_PERMILLE)
+        return hclk;
+    }
+    if (now >= deadline)
+      throw std::runtime_error(ctx + ": measured H-clock did not settle within " +
+                               std::to_string(HCLK_SETTLE_TIMEOUT_MS) + " ms, last " +
+                               std::to_string(hclk) + " MHz");
+    std::this_thread::sleep_for(std::chrono::milliseconds(HCLK_POLL_MS));
+  }
 }
 
-// Verify the H-clock for the higher power modes, where newer device revisions
-// run higher DPM7 clocks that can exceed the nominal DPM table maximum. Accept
-// any value at or above the expected value, or still within the original
-// ±tolerance band (covering values slightly below). The DPM tests that use this
-// are gated to NPU4, so no separate device-family check is needed here.
-void
-verify_hclk_atleast(device* dev, uint32_t expected, const std::string& ctx)
+// Verify the driver programmed the DPM level with the expected nominal H-clock,
+// and return the measured H-clock once it settles. Device revisions run their
+// own clock tables, so callers compare measurements with each other rather
+// than with the nominal table.
+uint32_t
+verify_dpm_hclk(device* dev, uint32_t expected, const std::string& ctx)
 {
-  auto clock_ok = [expected](uint32_t v) { return v >= expected || hclk_within_margin(v, expected); };
-  uint32_t actual = poll_hclk(dev, clock_ok);
+  uint32_t level_hclk = query_dpm_hclk(dev);
 
-  if (!clock_ok(actual))
-    throw std::runtime_error(ctx + ": expected H-clock >= " + std::to_string(expected) +
-                             " MHz or within ±" + std::to_string(HCLK_MARGIN_PCT) +
-                             "% of " + std::to_string(expected) + " MHz, got " +
-                             std::to_string(actual) + " MHz");
+  if (level_hclk != expected)
+    throw std::runtime_error(ctx + ": expected DPM level H-clock " + std::to_string(expected) +
+                             " MHz, got " + std::to_string(level_hclk) + " MHz");
 
-  std::cout << "  " << ctx << ": H-clock " << actual << " MHz (expected >= "
-            << expected << " or within ±" << HCLK_MARGIN_PCT << "%) [OK]" << std::endl;
+  uint32_t measured = settle_hclk(dev, ctx);
+  std::cout << "  " << ctx << ": DPM level H-clock " << level_hclk << " MHz, measured "
+            << measured << " MHz" << std::endl;
+  return measured;
+}
+
+// Verify the measured H-clock rose with the nominal H-clock of the DPM level.
+void
+verify_hclk_rise(uint32_t prev, uint32_t cur, uint32_t prev_nominal, uint32_t cur_nominal,
+                 const std::string& ctx)
+{
+  uint32_t min_rise = (cur_nominal - prev_nominal) * HCLK_RISE_PCT / 100;
+
+  if (cur < prev + min_rise)
+    throw std::runtime_error(ctx + ": measured H-clock " + std::to_string(cur) +
+                             " MHz did not rise by at least " + std::to_string(min_rise) +
+                             " MHz from " + std::to_string(prev) + " MHz");
+}
+
+// Verify a DPM level reached again measures the same as before.
+void
+verify_hclk_match(uint32_t ref, uint32_t cur, const std::string& ref_ctx, const std::string& ctx)
+{
+  uint32_t diff = (cur > ref) ? cur - ref : ref - cur;
+
+  if (diff * 100 > ref * HCLK_MATCH_PCT)
+    throw std::runtime_error(ctx + ": measured H-clock " + std::to_string(cur) +
+                             " MHz differs from " + std::to_string(ref) + " MHz " + ref_ctx +
+                             " by more than " + std::to_string(HCLK_MATCH_PCT) + "%");
 }
 
 /*
@@ -2240,19 +2277,20 @@ void
 TEST_dpm_noop_no_qos(device::id_type id, std::shared_ptr<device>& sdev, arg_type& arg)
 {
   auto dev = sdev.get();
+  uint32_t min_hclk = npu4_dpm_table[0].hclk;
   uint32_t max_hclk = npu4_dpm_table[DPM_NUM_LEVELS - 1].hclk;
 
   set_power_mode(dev, POWER_MODE_DEFAULT);
+  uint32_t idle = verify_dpm_hclk(dev, min_hclk, "no context");
 
   {
+    const std::string ctx = "noop context (no fps/latency QoS)";
     hw_ctx hwctx{dev, "nop"};
     dpm_test_bo_set nop{dev, "nop"};
     nop.run_with_ctx(hwctx);
-    // With no fps/latency QoS the driver requests the maximum DPM level, which
-    // on real hardware may run above the nominal DPM table maximum (same
-    // behavior as TURBO/HIGH in TEST_dpm_power_modes), so accept anything at or
-    // above max_hclk.
-    verify_hclk_atleast(dev, max_hclk, "noop context (no fps/latency QoS)");
+    // With no fps/latency QoS the driver requests the maximum DPM level.
+    uint32_t top = verify_dpm_hclk(dev, max_hclk, ctx);
+    verify_hclk_rise(idle, top, min_hclk, max_hclk, ctx);
   }
 }
 
@@ -2265,24 +2303,23 @@ TEST_dpm_power_modes(device::id_type id, std::shared_ptr<device>& sdev, arg_type
   uint32_t med_hclk = npu4_dpm_table[DPM_NUM_LEVELS / 2].hclk;
 
   set_power_mode(dev, POWER_MODE_TURBO);
-  // The turbo H-clock legitimately runs above the DPM table maximum on real
-  // hardware, so accept anything at or above max_hclk, while still accepting the
-  // original ±tolerance band for values slightly below it.
-  verify_hclk_atleast(dev, max_hclk, "POWER_MODE_TURBO");
+  uint32_t turbo = verify_dpm_hclk(dev, max_hclk, "POWER_MODE_TURBO");
 
   set_power_mode(dev, POWER_MODE_LOW);
-  verify_hclk(dev, low_hclk, "POWER_MODE_LOW");
+  uint32_t low = verify_dpm_hclk(dev, low_hclk, "POWER_MODE_LOW");
 
   set_power_mode(dev, POWER_MODE_MEDIUM);
-  verify_hclk(dev, med_hclk, "POWER_MODE_MEDIUM");
+  uint32_t med = verify_dpm_hclk(dev, med_hclk, "POWER_MODE_MEDIUM");
+  verify_hclk_rise(low, med, low_hclk, med_hclk, "POWER_MODE_MEDIUM");
 
   set_power_mode(dev, POWER_MODE_HIGH);
-  // Like TURBO, HIGH may run above the DPM table maximum, so accept anything at
-  // or above max_hclk (or within the original ±tolerance band).
-  verify_hclk_atleast(dev, max_hclk, "POWER_MODE_HIGH");
+  uint32_t high = verify_dpm_hclk(dev, max_hclk, "POWER_MODE_HIGH");
+  verify_hclk_rise(med, high, med_hclk, max_hclk, "POWER_MODE_HIGH");
+  verify_hclk_match(turbo, high, "in POWER_MODE_TURBO", "POWER_MODE_HIGH");
 
   set_power_mode(dev, POWER_MODE_LOW);
-  verify_hclk(dev, low_hclk, "POWER_MODE_LOW");
+  uint32_t low_again = verify_dpm_hclk(dev, low_hclk, "POWER_MODE_LOW");
+  verify_hclk_match(low, low_again, "in the first POWER_MODE_LOW", "POWER_MODE_LOW");
 
   set_power_mode(dev, POWER_MODE_DEFAULT);
 }
@@ -2335,6 +2372,9 @@ TEST_dpm_refcount_scaling(device::id_type id, std::shared_ptr<device>& sdev, arg
   set_power_mode(dev, POWER_MODE_DEFAULT);
 
   std::vector<std::unique_ptr<hw_ctx>> ctxs;
+  // Settled measured H-clock with contexts 0..i open, while scaling up.
+  std::vector<uint32_t> measured_up;
+  uint32_t prev_expected = 0;
 
   std::cout << "  Phase 1: Creating " << DPM_NUM_LEVELS << " contexts (DPM scaling up)" << std::endl;
   for (int i = 0; i < DPM_NUM_LEVELS; i++) {
@@ -2362,8 +2402,17 @@ TEST_dpm_refcount_scaling(device::id_type id, std::shared_ptr<device>& sdev, arg
         expected = levels[j].expected_hclk;
     }
 
-    verify_hclk(dev, expected, "after context " + std::to_string(i) +
-                " (target level " + std::to_string(i) + ")");
+    const std::string ctx = "after context " + std::to_string(i) +
+                            " (target level " + std::to_string(i) + ")";
+    uint32_t measured = verify_dpm_hclk(dev, expected, ctx);
+    if (i > 0) {
+      if (expected > prev_expected)
+        verify_hclk_rise(measured_up.back(), measured, prev_expected, expected, ctx);
+      else
+        verify_hclk_match(measured_up.back(), measured, "at the previous level", ctx);
+    }
+    measured_up.push_back(measured);
+    prev_expected = expected;
   }
 
   std::cout << "  Phase 2: Destroying " << DPM_NUM_LEVELS << " contexts (DPM scaling down)" << std::endl;
@@ -2372,7 +2421,9 @@ TEST_dpm_refcount_scaling(device::id_type id, std::shared_ptr<device>& sdev, arg
     std::cout << "  Destroyed context " << i << std::endl;
 
     if (i == 0) {
-      verify_hclk(dev, tbl[0].hclk, "after destroying last context (all refs gone)");
+      const std::string ctx = "after destroying last context (all refs gone)";
+      uint32_t measured = verify_dpm_hclk(dev, tbl[0].hclk, ctx);
+      verify_hclk_match(measured_up[0], measured, "with only context 0 open", ctx);
       break;
     }
 
@@ -2382,7 +2433,10 @@ TEST_dpm_refcount_scaling(device::id_type id, std::shared_ptr<device>& sdev, arg
         expected = levels[j].expected_hclk;
     }
 
-    verify_hclk(dev, expected, "after destroying context " + std::to_string(i));
+    const std::string ctx = "after destroying context " + std::to_string(i);
+    uint32_t measured = verify_dpm_hclk(dev, expected, ctx);
+    verify_hclk_match(measured_up[i - 1], measured,
+                      "after context " + std::to_string(i - 1) + " while scaling up", ctx);
   }
 }
 
